@@ -195,6 +195,11 @@ int main(int argc, char **argv)
     return bmap(opt.image) ? 0 : 1;
   }
 
+  if(opt.create_map) {
+    if(!add_mapping(opt.image)) return 1;
+    printf("mapping info created\n");
+  }
+
   if(opt.verify_map) {
     bdr = find_mapping(opt.image, 0);
 
@@ -216,7 +221,7 @@ int main(int argc, char **argv)
       printf("%s: no map\n", opt.image);
     }
 
-    return bdr ? 0 : 1;
+    if(!bdr) return 1;
   }
 
   if(opt.mbr) {
@@ -246,13 +251,7 @@ int main(int argc, char **argv)
       printf("%s: no map\n", opt.image);
     }
 
-    return bdr ? 0 : 1;
-  }
-
-  if(opt.create_map) {
-    if(!add_mapping(opt.image)) return 1;
-    printf("mapping info created\n");
-    return 0;
+    if(!bdr) return 1;
   }
 
   return 0;

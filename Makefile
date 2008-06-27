@@ -4,11 +4,7 @@ bdr: bdr.c mbr.o bdrive.o
 	gcc -g -O2 -Wall $^ -o $@
 
 test:
-	./hdimage --verbose --size 100000 --chs 0 255 63 --mkfs xfs test.img
-	sw 0 mount -oloop,offset=$$((63*512)) test.img /mnt
-	sw 0 chmod 777 /mnt
-	./hdimage --verbose --size 20000 --chs 0 4 16 --mkfs fat /mnt/boot.img
-	sw 0 umount /mnt
+	./tst "" 100M
 
 mbr.o: mbr.asm
 	nasm -O99 -f bin -l $*.lst -o $*.bin $<

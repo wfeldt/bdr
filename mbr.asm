@@ -53,12 +53,9 @@ check_90:
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 disk_read:
-			mov dl,[edd.drive]
 			mov ah,41h
 			mov bx,55aah
-			push dx
-			int 13h
-			pop dx
+			call int_13
 			jc disk_read_chs
 			cmp bx,0aa55h
 			jnz disk_read_chs
@@ -67,63 +64,57 @@ disk_read:
 disk_read_edd:
 			mov si,edd.packet
 			mov ah,42h
-			int 13h
-			ret
+			jmp int_13
 
 disk_read_chs:
-			or dword [edd.sector+4],0
-			jnz disk_read_chs_80
+			cmp dword [edd.sector+4],0
+			jnz disk_read_edd
 			mov ah,8
 			xor di,di
-			int 13h
+			call int_13
 			jc disk_read_chs_90
+
 			mov ax,cx
-			shr al,6
-			xchg al,ah
-			and cx,3fh
-			movzx bx,dh
-			inc ax
-			inc bx
-			; bx = heads
-			; cx = sectors
-			; ax = cylinders
-			mov bp,cx
-			imul bp,bx
-			jz disk_read_chs_80
-			mul bp
-			shl edx,16
-			xchg ax,dx
-			cmp [edd.sector],edx
-			jae disk_read_chs_80
+			shr cl,6
+			xchg cl,ch
+			and al,3fh
+			inc dh
+			mov bl,al
+			mul dh
+			; ax = s*h
+			xchg ax,bp
 			mov ax,[edd.sector]
-			mov dx,[edd.sector+2]
+			mov dx,[edd.sector + 2]
+			cmp dx,bp
+			jae disk_read_edd
 			div bp
-			; ax = cylinder
-			; dx = s/h
+			; ax = c, dx = s*h
+			cmp ax,cx
+			ja disk_read_edd
 			shl ah,6
 			xchg al,ah
-			xchg ax,bx
 			xchg ax,dx
-			cwd
-			div cx
-			; ax = head
-			; dx = sector
+			; dx = c
+			div bl
+			; ah = s-1, al = h
+			add dl,ah
 			inc dx
-			or bx,dx
-			mov cx,bx
-			mov dh,al
-			mov dl,[edd.drive]
+			mov ch,al
+			xchg cx,dx
+
 			mov al,[edd.count]
 			les bx,[edd.buf]
 			mov ah,2
-			int 13h
-			jc disk_read_chs_90
-			xor ax,ax
-			mov es,ax
-			ret
-disk_read_chs_80:
-			stc
+			call int_13
+			push word 0
+			pop es
 disk_read_chs_90:
+			ret
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+int_13:
+			mov dl,[edd.drive]
+			int 13h
 			ret
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
