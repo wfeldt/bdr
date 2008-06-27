@@ -1,0 +1,50 @@
+     1                                  
+     2                                  		bits 16
+     3                                  
+     4                                  		section .text
+     5                                  
+     6 00000000 FC                      		cld
+     7 00000001 EA[0600]C007            		jmp 0x7c0:_start_10
+     8                                  _start_10:
+     9 00000006 8CC8                    		mov ax,cs
+    10 00000008 8ED0                    		mov ss,ax
+    11 0000000A 6631E4                  		xor esp,esp
+    12 0000000D 8ED8                    		mov ds,ax
+    13 0000000F 8EC0                    		mov es,ax
+    14 00000011 8EE0                    		mov fs,ax
+    15 00000013 8EE8                    		mov gs,ax
+    16 00000015 FB                      		sti
+    17 00000016 8ED9                    		mov ds,cx
+    18 00000018 8EC1                    		mov es,cx
+    19 0000001A FB                      		sti
+    20 0000001B FC                      		cld
+    21                                  
+    22 0000001C E80200                  		call print
+    23                                  
+    24 0000001F EBFE                    		jmp $
+    25                                  
+    26                                  
+    27                                  ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    28                                  ; Write string.
+    29                                  ;
+    30                                  ;  si		text
+    31                                  ;
+    32                                  ; return:
+    33                                  ;
+    34                                  print:
+    35 00000021 AC                      		lodsb
+    36 00000022 08C0                    		or al,al
+    37 00000024 7409                    		jz print_90
+    38 00000026 BB0700                  		mov bx,7
+    39 00000029 B40E                    		mov ah,14
+    40 0000002B CD10                    		int 10h
+    41 0000002D EBF2                    		jmp print
+    42                                  print_90:
+    43 0000002F C3                      		ret
+    44                                  
+    45                                  
+    46                                  ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    47                                  
+    48 00000030 48692074686572650D-     hello		db "Hi there", 13, 10, 0
+    49 00000039 0A00               
+    50                                  
