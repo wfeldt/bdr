@@ -13,6 +13,7 @@ pa_edx			equ 20
 pa_ecx			equ 24
 pa_eax			equ 28
 pa_ds			equ 32
+pa_es			equ 34
 
 			; must be first
 			%include "bdrive_struc.inc"
@@ -34,14 +35,16 @@ edd_mapped_sector	dd 0,0
 
 edd_real_sector		dd 0,0
 edd_mapped_count	dw 0
+edd_real_count		dw 0
 edd_mapped_drive	db 0
-
+edd_buf_lin		dd 0
 
 new_int13:
 			cmp dl,[cs:bdrive.drive]
 			jz new_int13_10
 			jmp far [cs:bdrive.old_int13]
 new_int13_10:
+			push es
 			push ds
 			pushad
 			mov bp,sp
@@ -87,6 +90,7 @@ new_int13_80:
 new_int13_90:
 			popad
 			pop ds
+			pop es
 			push ax
 			lahf
 			mov [esp+6],ah
@@ -161,31 +165,74 @@ f_41:			; edd install check
 
 f_42:			; edd read
 
-			x86emu_print 'f_42: start'
+			mov es,[bp+pa_ds]
 
 			xor ax,ax
 			mov [bp+pa_eax+1],ah
 			mov [int13_err],ah
 
-			mov ax,[si+edd.count]
-			mov [edd_count],ax
+			mov ax,[es:si+edd.count]
+			mov [edd_real_count],ax
 			or ax,ax
 			jz f_42_90
 
-			mov eax,[si+edd.buf]
-			mov [edd_buf],eax
+			movzx eax,word [es:si+edd.buf]
+			movzx edx,word [es:si+edd.buf+2]
+			shl edx,4
+			add eax,edx
+			mov [edd_buf_lin],eax
 
-			mov eax,[si+edd.sector]
+			mov eax,[es:si+edd.sector]
 			mov [edd_real_sector],eax
-			mov eax,[si+edd.sector+4]
+			mov eax,[es:si+edd.sector+4]
 			mov [edd_real_sector+4],eax
 
+f_42_20:
 			call map_sector
 
-			cmp dword [edd_mapped_count],0
+			mov ax,[edd_mapped_count]
+			or ax,ax
 			jz f_42_80
 
-;			mov bx,bht + bht.drive_map
+			mov dx,[edd_real_count]
+			cmp ax,dx
+			jbe f_42_40
+			xchg ax,dx
+f_42_40:
+			movzx edx,ax
+			mov [edd_count],ax
+
+			mov eax,[edd_buf_lin]
+			mov ebx,eax
+			shr eax,4
+			shl eax,16
+			mov ax,bx
+			and ax,0fh
+			mov [edd_buf],eax
+
+			sub [edd_real_count],dx
+			add [edd_real_sector],edx
+			adc dword [edd_real_sector+4],0
+
+			shl edx,9
+			add [edd_buf_lin],edx
+
+			push ds
+
+			mov ah,42h
+			mov si,edd
+			mov dl,[edd_mapped_drive]
+			pushf
+			call far [bdrive.old_int13]
+
+			pop ds
+
+			jc f_42_80
+
+			cmp word [edd_real_count],0
+			jnz f_42_20
+
+			jmp f_42_90
 
 f_42_80:
 			mov byte [bp+pa_eax+1],4
@@ -206,7 +253,6 @@ f_45:			; edd lock/unlock
 
 
 f_48:			; edd drive params
-			push es
 			mov es,[bp+pa_ds]
 			mov ax,[es:si]
 			cmp ax,1ah
@@ -236,7 +282,6 @@ f_48_80:
 			mov [bp+pa_eax+1],ah
 			mov [int13_err],ah
 f_48_90:
-			pop es
 			ret
 
 
@@ -247,7 +292,7 @@ f_48_90:
 map_sector:
 			push es
 			mov es,[bdrive.map_seg]
-			mov cx,[bht.map_entries]
+			mov cx,[bht+bht.map_entries]
 
 			xor bp,bp
 
@@ -255,8 +300,8 @@ map_sector:
 
 			mov [edd_mapped_count],ax
 
-			cmp [edd_real_sector+4],eax
-			jz map_sector_90
+;			cmp [edd_real_sector+4],eax
+;			jz map_sector_90
 
 			mov edx,[edd_real_sector]
 
@@ -283,8 +328,12 @@ map_sector_60:
 			mov eax,[es:bp]
 			mov [edd_mapped_sector],eax
 			mov eax,[es:bp+4]
+			mov ebx,eax
 			and eax,(1 << 16) - 1
 			mov [edd_mapped_sector+4],eax
+			shr ebx,28
+			mov al,[bx+bht+bht.drive_map]
+			mov [edd_mapped_drive],al
 
 map_sector_90:
 			pop es

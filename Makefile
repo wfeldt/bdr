@@ -4,9 +4,19 @@ bdr: bdr.c mbr.o bdrive.o
 	gcc -g -O2 -Wall $^ -o $@
 
 test:
-	./tst 50M 100M test1.bin
+	./setup_img test.img 50M 100M
 	mnt test.img
 	sw 0 ./bdr --create-map --add-to-mbr test.img /mnt/boot.img
+	umnt
+
+test1:
+	./setup_img test1.img 50M 100M test1.bin
+	mnt test1.img
+	sw 0 ./bdr --create-map --add-to-mbr test1.img --bios 0x81 /mnt/boot.img
+	mnt /mnt/boot.img
+	sw 0 dd if=/dev/urandom of=/mnt/x || true
+	umnt
+	dd if=/mnt/boot.img of=test1.img bs=1M seek=1 conv=notrunc
 	umnt
 
 test-r0:

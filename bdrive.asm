@@ -329,15 +329,16 @@ setup_bdrive:
 ;  Does not return if ok.
 ;
 load_mbr:
-			x86emu_trace_on x86emu_trace_default
-
-			mov bp,[mbr_dap]
-			mov word [bp+edd.count],1
+			mov si,[mbr_dap]
+			mov word [si+edd.count],1
 			xor eax,eax
-			lea di,[bp+edd.sector]
+			lea di,[si+edd.sector]
 			stosd
 			stosd
-			call [mbr_disk_read]
+			mov dl,[bdrive.drive]
+			mov ah,42h
+			int 13h
+
 			sbb cx,cx
 			jnz load_mbr_90
 
@@ -355,6 +356,9 @@ load_mbr:
 
 			mov dl,[bdrive.drive]
 			xor sp,sp
+
+			x86emu_trace_on x86emu_trace_default
+
 			jmp 0:07c00h
 
 load_mbr_90:
@@ -385,7 +389,7 @@ hex1_20:
 code_ok			db "code loaded"
 msg_nl			db 10, 0
 map_ok			db "map loaded", 10, 0
-txt_drive_active	db "drive activated", 10, 0
+txt_drive_active	db "booting drive", 10, 0
 msg_no_mbr		db "Error: drive not bootable.", 10, 0
 
 drive_nr		db 'adding drive 0x'
