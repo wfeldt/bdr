@@ -357,8 +357,6 @@ load_mbr:
 			mov dl,[bdrive.drive]
 			xor sp,sp
 
-			x86emu_trace_on x86emu_trace_default
-
 			jmp 0:07c00h
 
 load_mbr_90:

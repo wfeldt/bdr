@@ -300,12 +300,10 @@ map_sector:
 
 			mov [edd_mapped_count],ax
 
-;			cmp [edd_real_sector+4],eax
-;			jz map_sector_90
-
 			mov edx,[edd_real_sector]
 
 map_sector_20:
+			mov edi,edx
 			mov ebx,[es:bp+4]
 			shr ebx,16
 			and ebx,(1 << 12) - 1
@@ -326,11 +324,13 @@ map_sector_60:
 			neg edx
 			mov [edd_mapped_count],dx
 			mov eax,[es:bp]
+			mov edx,[es:bp+4]
+			mov ebx,edx
+			and edx,(1 << 16) - 1
+			add eax,edi
+			adc edx,0
 			mov [edd_mapped_sector],eax
-			mov eax,[es:bp+4]
-			mov ebx,eax
-			and eax,(1 << 16) - 1
-			mov [edd_mapped_sector+4],eax
+			mov [edd_mapped_sector+4],edx
 			shr ebx,28
 			mov al,[bx+bht+bht.drive_map]
 			mov [edd_mapped_drive],al

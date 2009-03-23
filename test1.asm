@@ -1,6 +1,13 @@
 			bits 16
 
+			%include "x86emu.inc"
+
 disk_buf		equ 8000h
+disk_buf2		equ 8200h
+
+sector_start		equ 1024*2	; 1MB
+; sector_max		equ 2
+sector_max		equ 1024*20	; 10MB
 
 			section .text
 
@@ -19,40 +26,65 @@ main_10:
 			mov [edd.drive],dl
 
 			mov si,msg_hello
+			call print
+
+			call check
+			mov si,msg_check_failed
+			jc main_30
+			mov si,msg_check_ok
+main_30:
+
 			jmp final_msg
 
-%if 0
+
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-;
-; return:
-;   ZF:		1 ok; 0 not ok
-;
-
 check:
-			mov word [bp+edd.count],1
-			mov si,start_sector
-			lea di,[bp+edd.sector]
-			movsd
-			movsd
+check_10:
+			mov eax,[cnt]
+			mov [edd.sector],eax
+			mov word [edd.count],1
 			call disk_read
-			sbb cx,cx
-			jnz check_90
-			mov si,disk_buf+sht.id
-			mov di,id
-			mov cl,4		; cx was 0
-			rep cmpsw
-			jnz check_90
-			xor dx,dx
-			mov ch,1		; cx was 0
-			mov si,disk_buf
-check_50:
-			lodsw
-			add dx,ax
-			loop check_50
-check_90:
-			ret
+			jc check_90
 
-%endif
+;			x86emu_reset_stats
+
+			mov si,disk_buf
+			mov di,disk_buf2
+			mov cx,100h
+			rep movsw
+
+			mov eax,[cnt]
+			add eax,sector_start
+			mov [edd.sector],eax
+			mov word [edd.count],1
+			mov dl,80h
+			xchg dl,[edd.drive]
+			push dx
+			call disk_read
+			pop dx
+			mov [edd.drive],dl
+
+			x86emu_print "sector2 ok"
+
+;			x86emu_dump x86emu_dump_mem_default
+
+			jc check_90
+
+			mov si,disk_buf
+			mov di,disk_buf2
+			mov cx,100h
+			repe cmpsb
+			stc
+			jnz check_90
+
+			inc dword [cnt]
+			cmp dword [cnt],sector_max
+
+			jb check_10
+check_90:
+			x86emu_trace_on x86emu_trace_default
+
+			ret
 
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -149,7 +181,7 @@ int_13:
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 final_msg:
 			call print
-			mov si,msg_next
+			mov si,msg_done
 			call print
 			mov ah,0
 			int 16h
@@ -188,7 +220,8 @@ edd.count		dw 1
 edd.buf			dw 0, 0
 edd.sector		dd 0, 0
 edd.drive		db 0
-			dd 0, 0
+
+cnt			dd 0
 
 edd_checked		db 2
 
@@ -196,7 +229,9 @@ edd_checked		db 2
 msg_nl			db 13, 10
 msg_no_msg		db 0
 msg_hello		db "starting test1", 13, 10, 0
-msg_next		db 10, "Done.", 0
+msg_done		db 10, "test1 done", 0
+msg_check_ok		db 'check ok', 13, 10, 0
+msg_check_failed	db 'check failed', 13, 10, 0
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 %if ($ - $$) > 1b8h
