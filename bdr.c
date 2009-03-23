@@ -33,7 +33,7 @@ extern void mbr_start, mbr_end;
 #endif
 
 #define MAX_MAP_LEN	((1 << LEN_BITS) - 1)
-// #define MAX_MAP_LEN	100
+#define MAX_MAP_LEN	100	// testing
 
 #define MAX_DRIVES	(1 << DRIVE_BITS)
 
@@ -89,6 +89,12 @@ typedef struct __attribute ((packed)) {
   uint16_t bdr_size;			// sectors
   uint16_t map_size;			// sectors
   uint16_t map_entries;			// entries in block map
+  uint16_t bios_drive;			// emulated BIOS drive number
+  uint64_t disk_size;			// disk size (in sectors)
+  uint16_t disk_geo_cylinders;		// cylinders
+  uint8_t disk_geo_heads;		// heads
+  uint8_t disk_geo_sectors;		// sectors/track
+  uint16_t flags;			// bit 0: edd enabled
 } bdr_head_t;
 
 typedef struct {
@@ -99,6 +105,7 @@ typedef struct {
 } bdr_location_t;
 
 void help(void);
+void print_bdr(bdr_location_t *bdr);
 bdr_location_t *find_mapping(const char *file, int first_only);
 int add_mapping(const char *file);
 map_t *bmap(const char *file);
@@ -118,6 +125,11 @@ void encode_map(map_t *map);
 int verify_map(const char *file, map_t *map, int check_crc);
 unsigned calc_crc(unsigned char *buf);
 int store_mbr(const char *mbr, bdr_location_t *bdr);
+char *mnt_image(const char *file);
+int umnt_image(const char *file, char *mp);
+int read_sector(map_t *map, map_entry_t *m, unsigned char *buf);
+char *bios_drive_to_str(uint16_t bd);
+char *flags_to_str(unsigned flags);
 
 
 struct option options[] = {
@@ -127,6 +139,9 @@ struct option options[] = {
   { "create-map", 0, NULL, 1002 },
   { "verify-map", 0, NULL, 1003 },
   { "add-to-mbr", 1, NULL, 1004 },
+  { "bios",       1, NULL, 1005 },
+  { "geo",        1, NULL, 1006 },
+  { "flags",      1, NULL, 1007 },
   { "help",       0, NULL,  'h' },
   { }
 };
@@ -136,16 +151,31 @@ struct {
   unsigned map_file:1;
   unsigned create_map:1;
   unsigned verify_map:1;
+  unsigned bios;
+  unsigned heads;
+  unsigned secs_pt;
+  unsigned flags;
   uint64_t test;
   char *image;
   char *mbr;
-} opt = { test: -1 };
+} opt = { test: -1, bios: 0x80, heads: 64, secs_pt: 16, flags: 3 };
 
 int main(int argc, char **argv)
 {
   int i;
+  unsigned u, u1;
+  char *s, *t;
   bdr_location_t *bdr;
-  unsigned mt;
+
+  if(sizeof (bdr_head_t) != 0x2e) {
+    fprintf(stderr, "bdr_head_t has wrong size: %d\n", (int) sizeof (bdr_head_t));
+#if 1
+    // make ld fail
+    extern void wrong_struct_size(void);
+    wrong_struct_size();
+#endif
+    return 1;
+  }
 
   opterr = 0;
 
@@ -173,6 +203,51 @@ int main(int argc, char **argv)
 
       case 1004:
         opt.mbr = optarg;
+        break;
+
+      case 1005:
+        u = 0;
+        s = optarg;
+        if(*s == '+' || *s == '-') {
+          u = 0x8000;
+          s++;
+        }
+        i =  strtol(optarg, &s, 0);
+        if(*s) {
+          fprintf(stderr, "invalid bios drive spec\n");
+          return 1;
+        }
+        u += i & 0xff;
+        opt.bios = u;
+        break;
+
+      case 1006:
+        s = optarg;
+        u = u1 = 0;
+        u1 =  strtoul(s, &s, 0);
+        if(*s == ',' || *s == '/') {
+          u =  strtoul(s + 1, &s, 0);
+        }
+        if(!u || !u1 || *s) {
+          fprintf(stderr, "invalid geometry\n");
+          return 1;
+        }
+        opt.heads = u1;
+        opt.secs_pt = u;
+        break;
+
+      case 1007:
+        s = optarg;
+        while((t = strsep(&s, ","))) {
+          if(!strcmp(t, "+edd")) opt.flags |= 1;
+          else if(!strcmp(t, "-edd")) opt.flags &= ~1;
+          else if(!strcmp(t, "rw")) opt.flags |= 2;
+          else if(!strcmp(t, "ro")) opt.flags &= ~2;
+          else {
+            fprintf(stderr, "invalid flag\n");
+            return 1;
+          }
+        }
         break;
 
       default:
@@ -204,18 +279,7 @@ int main(int argc, char **argv)
     bdr = find_mapping(opt.image, 0);
 
     if(bdr) {
-      mt = bdr->s_h.id >> 32;
-      mt = (mt ^ (mt >> 16)) & 0xffff;
-
-      printf(
-        "%s: mapping found\n      id: %16llx\n    date: %u/%u/%u\n   drive: %u = %s\n  sector: %llu\n",
-        opt.image,
-        bdr->s_h.id,
-        mt & 0x1f, (mt >> 5) & 0xf, 2000 + (mt >> 9),
-        bdr->start->drive,
-        bdr->map->drive[bdr->start->drive]->name,
-        bdr->start->start
-      );
+      print_bdr(bdr);
     }
     else {
       printf("%s: no map\n", opt.image);
@@ -228,18 +292,7 @@ int main(int argc, char **argv)
     bdr = find_mapping(opt.image, 0);
 
     if(bdr) {
-      mt = bdr->s_h.id >> 32;
-      mt = (mt ^ (mt >> 16)) & 0xffff;
-
-      printf(
-        "%s: mapping found\n      id: %16llx\n    date: %u/%u/%u\n   drive: %u = %s\n  sector: %llu\n",
-        opt.image,
-        bdr->s_h.id,
-        mt & 0x1f, (mt >> 5) & 0xf, 2000 + (mt >> 9),
-        bdr->start->drive,
-        bdr->map->drive[bdr->start->drive]->name,
-        bdr->start->start
-      );
+      print_bdr(bdr);
 
       i = store_mbr(opt.mbr, bdr);
 
@@ -266,6 +319,8 @@ void help()
     "  --create-map                Create block map of IMAGE_FILE and store it in IMAGE_FILE.\n"
     "  --verify-map                Verify map stored in IMAGE_FILE.\n"
     "  --add-to-mbr DEVICE         Write boot code to DEVICE that points to IMAGE_FILE.\n"
+    "  --bios DRIVE_NR             Set BIOS drive number.\n"
+    "  --geo HEADS,SECTORS         Set drive geometry.\n"
     "  --map-file                  Show block map of IMAGE_FILE.\n"
     "  --verbose                   Be more verbose.\n"
   
@@ -273,17 +328,54 @@ void help()
 }
 
 
+void print_bdr(bdr_location_t *bdr)
+{
+  unsigned mt;
+
+  if(!bdr) return;
+
+  mt = bdr->s_h.id >> 32;
+  mt = (mt ^ (mt >> 16)) & 0xffff;
+
+  printf(
+    "%s: mapping found\n"
+    "        id: %016llx\n"
+    "      date: %u/%u/%u\n"
+    "bios drive: %s\n"
+    " disk size: %llu sectors\n"
+    "  disk geo: chs %u/%u/%u\n"
+    "     flags: %s\n"
+    "     drive: %u = %s\n"
+    "    sector: %llu\n",
+    opt.image,
+    (unsigned long long) bdr->s_h.id,
+    mt & 0x1f, (mt >> 5) & 0xf, 2000 + (mt >> 9),
+    bios_drive_to_str(bdr->bdr_h.bios_drive),
+    (unsigned long long) bdr->bdr_h.disk_size,
+    bdr->bdr_h.disk_geo_cylinders,
+    bdr->bdr_h.disk_geo_heads,
+    bdr->bdr_h.disk_geo_sectors,
+    flags_to_str(bdr->bdr_h.flags),
+    bdr->start->drive,
+    bdr->map->drive[bdr->start->drive]->name,
+    (unsigned long long) bdr->start->start
+  );
+}
+
+
 bdr_location_t *find_mapping(const char *file, int first_only)
 {
   bdr_location_t *bdr = NULL;
-  map_t *map1 = NULL;
-  int fd, ok, maps_found = 0, maps_ok = 0;
+  map_t *map1 = NULL, *map2 = NULL;
+  int fd, ok = 0, maps_found = 0, maps_ok = 0;
   unsigned char buf[SECTOR_SIZE];
-  unsigned u, u2, mt;
+  unsigned u2, mt;
   sector_head_t s_h, s0_h;
   bdr_head_t bdr_h;
   unsigned char *bdr_image = NULL, *map_image = NULL;
+  char *mp = NULL, *map_name = NULL;
   unsigned bdr_image_len, map_image_len;
+  map_entry_t *m1 = NULL, *m2 = NULL;
 
   fd = open(file, O_RDONLY | O_LARGEFILE);
   if(fd < 0) {
@@ -298,9 +390,21 @@ bdr_location_t *find_mapping(const char *file, int first_only)
     return NULL;
   }
 
-  for(u = 0; u < map1->file_size; u++) {
-    if(lseek64(fd, u * SECTOR_SIZE, 0) == (off64_t) -1) break;
-    if(read(fd, buf, sizeof buf) != sizeof buf) break;
+  mp = mnt_image(file);
+  if(!mp) return NULL;
+
+  asprintf(&map_name, "%s/bdr.map", mp);
+  map2 = bmap(map_name);
+
+  umnt_image(map_name, mp);
+  free(map_name); map_name = NULL;
+
+  m1 = map_sector(map2, 0);
+  if(m1) m2 = map_sector(map1, m1->start);
+
+  if(read_sector(map1, m2, buf)) ok = 1;
+
+  if(ok) {
     memcpy(&s_h, buf, sizeof s_h);
     memcpy(&s0_h, buf, sizeof s0_h);
     memcpy(&bdr_h, buf + sizeof s_h, sizeof bdr_h);
@@ -314,8 +418,8 @@ bdr_location_t *find_mapping(const char *file, int first_only)
         memcpy(bdr_image, buf, SECTOR_SIZE);
         ok = 1;
         for(u2 = 1; u2 < bdr_h.bdr_size + bdr_h.map_size; u2++) {
-          if(lseek64(fd, DECODE_START(s_h.next) * SECTOR_SIZE, 0) == (off64_t) -1) { ok = 0; break; }
-          if(read(fd, bdr_image + u2 * SECTOR_SIZE, SECTOR_SIZE) != SECTOR_SIZE) { ok = 0; break; }
+          m2->start = DECODE_START(s_h.next);
+          if(!read_sector(map1, m2, bdr_image + u2 * SECTOR_SIZE)) ok = 0;
           if(calc_crc(bdr_image + u2 * SECTOR_SIZE)) { ok = 0; break; }
           memcpy(&s_h, bdr_image + u2 * SECTOR_SIZE, sizeof s_h);
         }
@@ -330,12 +434,12 @@ bdr_location_t *find_mapping(const char *file, int first_only)
 
       if(opt.verbose >= 1) {
         fprintf(stderr,
-          "%s: map at sector %u:\n"
+          "%s: map at sector %llu:\n"
           "    id: %16llx\n"
           "  date: %u/%u/%u\n"
           "  size: %u sectors (bdr %u, map %u)\n"
           "   map: %u entries\n",
-          file, u, s0_h.id,
+          file, m1->start, s0_h.id,
           mt & 0x1f, (mt >> 5) & 0xf, 2000 + (mt >> 9),
           bdr_image_len / SECTOR_SIZE,
           bdr_h.bdr_size, bdr_h.map_size,
@@ -371,7 +475,7 @@ bdr_location_t *find_mapping(const char *file, int first_only)
           bdr->map = map1;
           bdr->s_h = s0_h;
           bdr->bdr_h = bdr_h;
-          bdr->start = map_sector(map1, u);
+          bdr->start = map_sector(map1, m1->start);
         }
 
         if(opt.verbose >= 1) fprintf(stderr, "map ok\n");
@@ -387,9 +491,14 @@ bdr_location_t *find_mapping(const char *file, int first_only)
     }
   }
 
+  m1 = free_map_entry(m1);
+  m2 = free_map_entry(m2);
+
   close(fd);
 
   if(!bdr) free_map(map1);
+
+  free_map(map2);
 
   return bdr;
 }
@@ -398,15 +507,14 @@ bdr_location_t *find_mapping(const char *file, int first_only)
 int add_mapping(const char *file)
 {
   map_t *map = NULL, *map2 = NULL;
-  map_entry_t *m = NULL;
+  map_entry_t *m = NULL, *m2 = NULL;
   unsigned char *bdr_image;
-  unsigned bdr_image_len, u, pstart, psize, crc, u2;
-  int i, fd, ok =0;
+  unsigned bdr_image_len, u, u1, u2, u3, crc;
+  int i, fd, ok = 0;
   uint64_t id, id1;
   struct tm *tms;
   time_t tt;
-  char *buf = NULL, *map_name = NULL;
-  char *tmp_dir = strdup("/tmp/bdr.XXXXXX");
+  char *map_name = NULL, *mp = NULL;
   sector_head_t s_h = { };
   bdr_head_t bdr_h = { magic: BDR_MAGIC };
 
@@ -425,66 +533,41 @@ int add_mapping(const char *file)
   if(!map) return 0;
 
   bdr_h.bdr_size = (
-    sizeof s_h +
-    sizeof bdr_h +
-    SECTOR_SIZE - 1 +
-    &bdrive_end - &bdrive_start
-  ) / SECTOR_SIZE;
+    sizeof bdr_h + &bdrive_end - &bdrive_start + SECTOR_SIZE - sizeof s_h - 1
+  ) / (SECTOR_SIZE - sizeof s_h);
 
   bdr_image_len = bdr_h.bdr_size * SECTOR_SIZE + map->map_image_len;
   bdr_image = calloc(1, bdr_image_len);
 
-  fd = open(file, O_RDONLY | O_LARGEFILE);
-  if(fd < 0) return 0;
-  u = read(fd, bdr_image, SECTOR_SIZE);
-  close(fd);
-
-  if(u != SECTOR_SIZE) return 0;
-
-  pstart = bdr_image[0x1be + 8] +
-           (bdr_image[0x1be + 9] << 8) +
-           (bdr_image[0x1be + 10] << 16) +
-           (bdr_image[0x1be + 11] << 24);
-  psize = bdr_image[0x1be + 12] +
-          (bdr_image[0x1be + 13] << 8) +
-          (bdr_image[0x1be + 14] << 16) +
-          (bdr_image[0x1be + 15] << 24);
-
-  if(
-    bdr_image[0x1fe] != 0x55 ||
-    bdr_image[0x1ff] != 0xaa ||
-    !pstart || !psize || pstart + psize > map->file_size
-  ) {
-    fprintf(stderr, "%s: no/invalid partition table\n", file);
-    return 0;
-  }
-
-  if(opt.verbose >= 2) fprintf(stderr, "partition: start = %u, size = %u\n", pstart, psize);
-
-  if(!mkdtemp(tmp_dir)) return 0;
-
-  memset(bdr_image, 0, SECTOR_SIZE);
-  memcpy(bdr_image + SECTOR_SIZE, map->map_image, map->map_image_len);
+  memcpy(bdr_image + bdr_h.bdr_size * SECTOR_SIZE, map->map_image, map->map_image_len);
 
   bdr_h.map_size = map->map_image_len / SECTOR_SIZE;
   bdr_h.map_entries = map->map_len;
+  bdr_h.bios_drive = opt.bios;
+  bdr_h.disk_size = map->file_size;
+  bdr_h.flags = opt.flags;
+  bdr_h.disk_geo_heads = opt.heads;
+  bdr_h.disk_geo_sectors = opt.secs_pt;
+  u = bdr_h.disk_size / (opt.heads * opt.secs_pt);
+  bdr_h.disk_geo_cylinders = u > 1024 ? 1024 : u;
 
   memcpy(bdr_image + sizeof s_h, &bdr_h, sizeof bdr_h);
-  memcpy(bdr_image + sizeof s_h + sizeof bdr_h, &bdrive_start, &bdrive_end - &bdrive_start);
-
-  asprintf(&buf, "mount -oloop,offset=%u %s %s", pstart * SECTOR_SIZE, file, tmp_dir);
-  i = system(buf);
-
-  if(i) {
-    fprintf(stderr, "%s: mount failed\n", file);
-
-    rmdir(tmp_dir);
-    return 0;
+  u = &bdrive_end - &bdrive_start;
+  if(u > SECTOR_SIZE - sizeof s_h - sizeof bdr_h) u = SECTOR_SIZE - sizeof s_h - sizeof bdr_h;
+  memcpy(bdr_image + sizeof s_h + sizeof bdr_h, &bdrive_start, u);
+  u3 = u;
+  u = &bdrive_end - &bdrive_start;
+  for(u2 = SECTOR_SIZE + sizeof s_h; u3 < u; u2 += SECTOR_SIZE, u3 += SECTOR_SIZE - sizeof s_h) {
+    u1 = u - u3;
+    if(u1 > SECTOR_SIZE - sizeof s_h) u1 = SECTOR_SIZE - sizeof s_h;
+    memcpy(bdr_image + u2, &bdrive_start + u3, u1);
   }
 
-  free(buf); buf = NULL;
+  mp = mnt_image(file);
 
-  asprintf(&map_name, "%s/bdr.map", tmp_dir);
+  if(!mp) return 0;
+
+  asprintf(&map_name, "%s/bdr.map", mp);
 
   fd = open(map_name, O_WRONLY | O_TRUNC | O_CREAT, 0644);
   if(fd >= 0) {
@@ -506,8 +589,11 @@ int add_mapping(const char *file)
       for(u = 0; ok && u < u2; u++) {
         m = map_sector(map2, (u + 1 == u2 ? u : u + 1));
         if(m) {
+          m2 = map_sector(map, m->start);
+        }
+        if(m2) {
           s_h.id = id++;
-          s_h.next = ENCODE_START(u + 1 == u2 ? 0 : m->start);
+          s_h.next = ENCODE_START(u + 1 == u2 ? 0 : m2->start);
           memcpy(bdr_image + u * SECTOR_SIZE, &s_h, sizeof s_h);
           crc = calc_crc(bdr_image + u * SECTOR_SIZE);
           s_h.next += ENCODE_CRC(-crc);
@@ -516,6 +602,7 @@ int add_mapping(const char *file)
         else {
           ok = 0;
         }
+        m2 = free_map_entry(m2);
         m = free_map_entry(m);
       }
     }
@@ -543,21 +630,9 @@ int add_mapping(const char *file)
 
   free(map_name); map_name = NULL;
 
-  asprintf(&buf, "umount %s", tmp_dir);
+  i = umnt_image(file, mp);
 
-  i = system(buf);
-
-  rmdir(tmp_dir);
-
-  if(i) {
-    fprintf(stderr, "%s: umount failed\n", file);
-    return 0;
-  }
-
-  free(tmp_dir); tmp_dir = NULL;
-  free(buf); buf = NULL;
-
-  return 1;
+  return i;
 }
 
 
@@ -934,6 +1009,8 @@ map_entry_t *map_sector(map_t *map, uint64_t sector)
   unsigned u;
   map_entry_t *m = NULL;
 
+  if(!map) return NULL;
+
   for(u = 0; u < map->map_len; u++) {
     if(sector < map->map[u].len) {
       m = calloc(1, sizeof *m);
@@ -1113,7 +1190,7 @@ int store_mbr(const char *mbr, bdr_location_t *bdr)
 
   if(read(fd, buf, sizeof buf) == sizeof buf) {
     memcpy(buf, &mbr_start, 0x1b8);
-    s = encode_map_entry(bdr->start);
+    s = bdr->start->start;
     memcpy(buf + 0x1a8, &s, 8);
     memcpy(buf + 0x1b0, &bdr->s_h.id, 8);
     memcpy(buf + 0x1fe, &mbr_start + 0x1fe, 2);
@@ -1135,4 +1212,144 @@ int store_mbr(const char *mbr, bdr_location_t *bdr)
 
   return ok;
 }
+
+
+char *mnt_image(const char *file)
+{
+  char *mp = NULL, *buf = NULL;
+  unsigned char mbr[SECTOR_SIZE];
+  unsigned u, pstart, psize;
+  int i, fd;
+
+  fd = open(file, O_RDONLY | O_LARGEFILE);
+  if(fd < 0) return NULL;
+  u = read(fd, mbr, sizeof mbr);
+  close(fd);
+
+  if(u != sizeof mbr) return NULL;
+
+  pstart = mbr[0x1be + 8] +
+           (mbr[0x1be + 9] << 8) +
+           (mbr[0x1be + 10] << 16) +
+           (mbr[0x1be + 11] << 24);
+  psize = mbr[0x1be + 12] +
+          (mbr[0x1be + 13] << 8) +
+          (mbr[0x1be + 14] << 16) +
+          (mbr[0x1be + 15] << 24);
+
+  if(
+    mbr[0x1fe] != 0x55 ||
+    mbr[0x1ff] != 0xaa ||
+    !pstart || !psize
+  ) {
+    fprintf(stderr, "%s: no/invalid partition table\n", file);
+    return NULL;
+  }
+
+  if(opt.verbose >= 2) fprintf(stderr, "partition: start = %u, size = %u\n", pstart, psize);
+
+  mp = strdup("/tmp/bdr.XXXXXX");
+  if(!mkdtemp(mp)) {
+    free(mp); return NULL;
+  }
+
+  asprintf(&buf, "mount -oloop,offset=%u %s %s", pstart * SECTOR_SIZE, file, mp);
+  i = system(buf);
+  free(buf); buf = NULL;
+
+  if(i) {
+    fprintf(stderr, "%s: mount failed\n", file);
+
+    rmdir(mp);
+    free(mp);
+    return NULL;
+  }
+
+  return mp;
+}
+
+
+int umnt_image(const char *file, char *mp)
+{
+  char *buf = NULL;
+  int i;
+
+  if(!mp) return 1;
+
+  asprintf(&buf, "umount %s", mp);
+
+  i = system(buf);
+  free(buf);
+
+  rmdir(mp);
+  free(mp);
+
+  if(i) {
+    if(file) fprintf(stderr, "%s: umount failed\n", file);
+    return 0;
+  }
+
+  return 1;
+}
+
+
+int read_sector(map_t *map, map_entry_t *m, unsigned char *buf)
+{
+  int fd, ok = 0;
+  char *file;
+  unsigned len;
+
+  if(!map || !m || !buf) return 0;
+
+  file = map->drive[m->drive]->name;
+  if(!file) return 0;
+
+  fd = open(file, O_RDONLY | O_LARGEFILE);
+  if(fd < 0) {
+    perror(file);
+    return 0;
+  }
+
+  if(lseek64(fd, m->start * SECTOR_SIZE, 0) != (off64_t) -1) ok = 1;
+
+  len = m->len * SECTOR_SIZE;
+
+  if(ok && read(fd, buf, len) == len) ok = 1;
+
+  close(fd);
+
+  return ok;
+}
+
+
+char *bios_drive_to_str(uint16_t bd)
+{
+  static char buf[32];
+  int i;
+
+  if((bd & 0x8000)) {
+    i = bd & 0xff;
+    if(i & 0x80) i += (-1 & ~0xff);
+    sprintf(buf, "%+d", i);
+  }
+  else {
+    sprintf(buf, "0x%02x", bd & 0xff);
+  }
+
+  return buf;
+}
+
+
+char *flags_to_str(unsigned flags)
+{
+  static char buf[256];
+
+  sprintf(buf, "%cedd, %s",
+    flags & 1 ? '+' : '-',
+    flags & 2 ? "rw" : "ro"
+  );
+
+  return buf;
+}
+
 

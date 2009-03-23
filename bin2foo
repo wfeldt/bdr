@@ -1,0 +1,193 @@
+#! /usr/bin/perl
+
+use Getopt::Long;
+
+sub write_hex;
+sub finish_hex;
+
+sub write_perl;
+sub finish_perl;
+
+sub write_sh;
+sub finish_sh;
+
+sub write_asm;
+sub finish_asm;
+
+sub write_c;
+sub finish_c;
+
+%write_data = (
+  hex  => \&write_hex,
+  perl => \&write_perl,
+  sh   => \&write_sh,
+  asm  => \&write_asm,
+  c  => \&write_c,
+);
+
+%finish_data = (
+  hex  => \&finish_hex,
+  perl => \&finish_perl,
+  sh => \&finish_sh,
+  asm => \&finish_asm,
+  c => \&finish_c,
+);
+
+$opt_format = 'hex';
+
+GetOptions(
+  'format|f=s' => \$opt_format,
+);
+
+die "unsupported format: $opt_format\n" unless $opt_format =~ /^(hex|perl|sh|asm|c)$/;
+
+$cnt = 0;
+$buf_size = 0x1000;
+
+for $f (@ARGV) {
+  open F, $f;
+
+  do {
+    sysread F, $buf, $buf_size;
+    $write_data{$opt_format}(\$buf) if length $buf;
+  }
+  while($buf_size = length $buf);
+
+  close F;
+}
+
+$finish_data{$opt_format}();
+
+if(!@ARGV) {
+  $write_data{$opt_format}(\$buf) while sysread(STDIN, $buf, $buf_size) >= $buf_size;
+}
+
+
+sub write_hex
+{
+  my (@buf);
+  local $_;
+
+  @buf = unpack "C*", ${$_[0]};
+  for (@buf) {
+    print " " if ($cnt % 16) == 0;
+    printf " %02x", $_;
+    $cnt++;
+    print "\n" if ($cnt % 16) == 0;
+  }
+}
+
+
+sub finish_hex
+{
+  print "\n" if $cnt % 16;
+}
+
+
+sub write_perl
+{
+  my (@buf);
+  local $_;
+
+  @buf = unpack "C*", ${$_[0]};
+  for (@buf) {
+    print "  \"" if ($cnt % 16) == 0;
+    printf "\\x%02x", $_;
+    $cnt++;
+    print "\" .\n" if ($cnt % 16) == 0;
+  }
+}
+
+
+sub finish_perl
+{
+  print "\" .\n" if $cnt % 16;
+}
+
+
+sub write_sh
+{
+  my (@buf);
+  local $_;
+
+  @buf = unpack "C*", ${$_[0]};
+  for (@buf) {
+    print "  echo -ne \"" if !$cnt;
+    if(
+      $_ < 0x20 || $_ >= 0x7f ||
+      $_ == ord('"') || $_ == ord('\\') || $_ == ord('!') ||
+      $_ == ord('`') || $_ == ord('$')
+    ) {
+      printf "\\x%02x", $_;
+      $cnt += 4;
+    }
+    else {
+      printf "%c", $_;
+      $cnt++;
+    }
+    if($cnt >= 64) {
+      print "\"\n";
+      $cnt = 0;
+    }
+  }
+}
+
+
+sub finish_sh
+{
+  print "\"\n" if $cnt;
+}
+
+
+sub write_asm
+{
+  my (@buf);
+  local $_;
+
+  @buf = unpack "C*", ${$_[0]};
+  for (@buf) {
+    if($cnt % 8) {
+      print ", ";
+    }
+    else {
+      print "\t\tdb ";
+    }
+    printf "0x%02x", $_;
+    $cnt++;
+    print "\n" if ($cnt % 8) == 0;
+  }
+}
+
+
+sub finish_asm
+{
+  print "\n" if $cnt % 8;
+}
+
+
+sub write_c
+{
+  my (@buf);
+  local $_;
+
+  @buf = unpack "C*", ${$_[0]};
+  for (@buf) {
+    if($cnt % 8) {
+      print ", ";
+    }
+    else {
+      print "  ";
+    }
+    printf "0x%02x", $_;
+    $cnt++;
+    print ",\n" if ($cnt % 8) == 0;
+  }
+}
+
+
+sub finish_c
+{
+  print "\n" if $cnt % 8;
+}
+
+

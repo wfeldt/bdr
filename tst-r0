@@ -1,0 +1,32 @@
+#! /bin/bash
+
+start=$1
+size=$2
+file1=test1.img
+file2=test2.img
+
+if [ -z "$size" ] ; then
+  echo "usage: tst start size"
+  exit 1
+fi
+
+if [ -n "$start" ] ; then
+  startx="--part-ofs $start"
+fi
+
+umnt
+sw 0 dmsetup remove test
+sw 0 losetup -d /dev/loop6
+sw 0 losetup -d /dev/loop7
+./hdimage --verbose $startx --size $size --chs 0 7 19 $file1
+./hdimage --verbose $startx --size $size --chs 0 7 19 $file2
+sw 0 losetup /dev/loop6 $file1
+sw 0 losetup /dev/loop7 $file2
+echo 0 $((($size - $start) * 2)) striped 2 8 /dev/loop6 $start /dev/loop7 $start >test.dm
+sw 0 dmsetup create test test.dm
+sw 0 chmod 666 /dev/mapper/test
+mkfs.ext2 /dev/mapper/test
+mnt /dev/mapper/test
+sw 0 chmod 777 /mnt
+./hdimage --verbose --size 10M --chs 0 4 16 --mkfs fat /mnt/boot.img
+

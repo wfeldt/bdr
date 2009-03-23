@@ -1,0 +1,20 @@
+#! /usr/bin/perl
+
+while(<>) {
+  if(/^\s*\d+\s*mbr_fill/) {
+    print "$ARGV: 0 bytes left\n";
+    last;
+  }
+
+  if(/^\s*\d+\s+(\S+)\s+\S+\s+(\S+)/) {
+    if($start) {
+      print "$ARGV: ", hex($1) - hex($start), " bytes left\n";
+      last;
+    }
+    if($2 eq 'mbr_fill') {
+      $start = $1;
+      next;
+    }
+  }
+
+}

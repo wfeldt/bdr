@@ -14,7 +14,7 @@ if [ -n "$start" ] ; then
 fi
 
 umnt
-./hdimage --verbose $start --size $size --chs 0 255 63 --mkfs xfs $file
+./hdimage --verbose $start --size $size --chs 0 7 19 --mkfs xfs $file
 mnt test.img
 sw 0 chmod 777 /mnt
 ./hdimage --verbose --size 10M --chs 0 4 16 --mkfs fat /mnt/boot.img
