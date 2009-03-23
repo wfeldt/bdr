@@ -1,10 +1,10 @@
-all: bdr
+all: bdr test1.bin
 
 bdr: bdr.c mbr.o bdrive.o
 	gcc -g -O2 -Wall $^ -o $@
 
 test:
-	./tst 50M 100M
+	./tst 50M 100M test1.bin
 	mnt test.img
 	sw 0 ./bdr --create-map --add-to-mbr test.img /mnt/boot.img
 	umnt
@@ -32,6 +32,9 @@ bdrive.o: bdrive.asm bdrive_res.hex
 bdrive_res.hex: bdrive_res.asm bdrive_struc.inc
 	nasm -O99 -f bin -l bdrive_res.lst -o bdrive_res.bin $<
 	./bin2foo -f asm bdrive_res.bin >$@
+
+test1.bin: test1.asm
+	nasm -O99 -f bin -l test1.lst -o test1.bin $<
 
 clean:
 	rm -f *~ bdr *.bin *.lst *.o bdrive_res.hex

@@ -329,6 +329,8 @@ setup_bdrive:
 ;  Does not return if ok.
 ;
 load_mbr:
+			x86emu_trace_on x86emu_trace_default
+
 			mov bp,[mbr_dap]
 			mov word [bp+edd.count],1
 			xor eax,eax
