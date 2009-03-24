@@ -8,9 +8,6 @@
 
 			%include "x86emu.inc"
 
-disk_buf		equ 8000h
-disk_buf2		equ 8200h
-
 			section .text
 
 			org 7c00h
@@ -27,10 +24,13 @@ main_10:
 
 			mov [edd.drive],dl
 
+			call disk_read
+
 			mov si,msg_hello
 			call print
 
 			call check
+
 			mov si,msg_check_failed
 			jc main_30
 			mov si,msg_check_ok
@@ -40,62 +40,7 @@ main_30:
 
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-check:
-check_10:
-			mov eax,[cnt]
-			mov [edd.sector],eax
-			mov word [edd.count],1
-			call disk_read
-			jc check_90
-
-;			x86emu_reset_stats
-
-			mov si,disk_buf
-			mov di,disk_buf2
-			mov cx,100h
-			rep movsw
-
-			mov eax,[cnt]
-			add eax,[sector_start]
-			mov [edd.sector],eax
-			mov word [edd.count],1
-			mov dl,80h
-			xchg dl,[edd.drive]
-			push dx
-			call disk_read
-			pop dx
-			mov [edd.drive],dl
-
-;			x86emu_print "sector2 ok"
-
-;			x86emu_dump x86emu_dump_mem_default
-
-			jc check_90
-
-			mov si,disk_buf
-			mov di,disk_buf2
-			mov cx,100h
-			repe cmpsw
-			stc
-			jnz check_90
-
-;			x86emu_trace_on x86emu_trace_default
-
-			mov eax,[cnt]
-			inc eax
-			mov [cnt],eax
-			cmp eax,[sector_count]
-
-			jb check_10
-check_90:
-;			x86emu_trace_on x86emu_trace_default
-
-			ret
-
-
-; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 disk_read:
-			mov dword [edd.buf],disk_buf << 12
 			call edd_check
 			jc disk_read_chs
 disk_read_edd:
@@ -210,38 +155,37 @@ print:
 			lodsb
 			or al,al
 			jz print_90
+			cmp al,0ah
+			jnz print_50
+			mov ax,0e0dh
 			mov bx,7
-			mov ah,14
+			int 10h
+			mov al,0ah
+print_50:
+			mov bx,7
+			mov ah,0eh
 			int 10h
 			jmp print
 print_90:
 			ret
 
 
+
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 			align 4
 
 edd.packet		dw 10h
-edd.count		dw 1
-edd.buf			dw 0, 0
-edd.sector		dd 0, 0
+edd.count		dw prog_blocks
+edd.buf			dw 7e00h, 0
+edd.sector		dd 1, 0
+
 edd.drive		db 0
-
-cnt			dd 0
-
 edd_checked		db 2
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-msg_nl			db 13, 10
-msg_no_msg		db 0
-msg_hello		db "starting test_01", 13, 10, 0
-msg_done		db 10, "test_01 done", 0
-msg_check_ok		db 'check ok', 13, 10, 0
-msg_check_failed	db 'check failed', 13, 10, 0
-
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 %if ($ - $$) > 1b8h
-%error "test_01 too big"
+%error "test_02 too big"
 %endif
 
 mbr_fill		times 1b6h - ($ - $$) db 0
@@ -252,3 +196,142 @@ sector_count		dd 0
 			times 40h db 0
 
 			dw 0aa55h
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+buf1_seg		equ 1000h
+buf2_seg		equ 3000h
+
+msg_nl			db 10
+msg_no_msg		db 0
+msg_done		db 10, "test_02 done", 0
+msg_hello		db "starting test_02", 10, 0
+msg_check_ok		db 'check ok', 10, 0
+msg_check_failed	db 'check failed', 10, 0
+msg_step		db 13, 'step ', 0
+
+			align 4
+cnt			dd 0
+block_size		dd 0
+block_sizes		db 7, 32, 50, 64
+block_sizes_end		equ $
+step			db 0
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+; Print hex number.
+;
+hex2:
+			push ax
+			shr al,4
+			call hex1
+			pop ax
+hex1:
+			and al,0fh
+			cmp al,9
+			jbe hex1_20
+			add al,7
+hex1_20:
+			add al,'0'
+			mov si,hex1_buf
+			mov [si],al
+			jmp print
+
+hex1_buf		db 0, 0
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+check:
+			xor ax,ax
+			xor di,di
+			mov dx,buf1_seg
+			mov bx,4
+check_05:
+			mov es,dx
+			mov cx,8000h
+			rep stosw
+			add dx,1000h
+			dec bx
+			jnz check_05
+
+check_07:
+			mov dword [cnt],0
+
+			movzx ebx,byte [step]
+			mov al,[block_sizes+bx]
+			mov [block_size],al
+
+			mov si,msg_step
+			call print
+			mov ax,[step]
+			call hex2
+
+check_10:
+			mov dword [edd.buf],buf1_seg << 16
+			mov eax,[cnt]
+			mov [edd.sector],eax
+			push word [block_size]
+			pop word [edd.count]
+			call disk_read
+			jc check_90
+
+			mov dword [edd.buf],buf2_seg << 16
+			mov eax,[cnt]
+			add eax,[sector_start]
+			mov [edd.sector],eax
+			push word [block_size]
+			pop word [edd.count]
+			mov dl,80h
+			xchg dl,[edd.drive]
+			push dx
+			call disk_read
+			pop dx
+			mov [edd.drive],dl
+
+			jc check_90
+
+			xor si,si
+			xor di,di
+			mov cx,8000h
+			mov bx,buf1_seg
+			mov dx,buf2_seg
+			mov fs,bx
+			mov es,dx
+			fs repe cmpsw
+			stc
+
+			jnz check_90
+			mov cx,8000h
+			add bx,1000h
+			add dx,1000h
+			mov fs,bx
+			mov es,dx
+			fs repe cmpsw
+			stc
+			jnz check_90
+
+			mov eax,[cnt]
+			add eax,[block_size]
+			mov [cnt],eax
+			add eax,[block_size]
+			cmp eax,[sector_count]
+
+			jbe check_10
+
+			inc byte [step]
+			cmp byte [step],block_sizes_end - block_sizes
+			jb check_07
+
+check_90:
+;			x86emu_trace_on x86emu_trace_default
+
+			mov si,msg_nl
+			call print
+
+			ret
+
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+prog_blocks		equ ($ - $$ + 511) >> 9
+

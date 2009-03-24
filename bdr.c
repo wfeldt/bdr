@@ -33,7 +33,7 @@ extern void mbr_start, mbr_end;
 #endif
 
 #define MAX_MAP_LEN	((1 << LEN_BITS) - 1)
-#define MAX_MAP_LEN	100	// testing
+#define MAX_MAP_LEN	50	// testing
 
 #define MAX_DRIVES	(1 << DRIVE_BITS)
 

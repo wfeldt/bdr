@@ -390,7 +390,7 @@ map_ok			db "map loaded", 10, 0
 txt_drive_active	db "booting drive", 10, 0
 msg_no_mbr		db "Error: drive not bootable.", 10, 0
 
-drive_nr		db 'adding drive 0x'
+drive_nr		db 'adding drive 0x', 0
 hex1_buf		db 0, 0
 
 bdrive_res_start:
