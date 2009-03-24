@@ -1,0 +1,85 @@
+#! /usr/bin/perl
+
+use Getopt::Long;
+
+sub usage;
+sub num;
+
+GetOptions(
+  'help'        => sub { usage 0 },
+  'byte=s%'  => \$opt_bytes,
+  'word=s%'  => \$opt_words,
+  'dword=s%'  => \$opt_dwords,
+) || usage 1;
+
+
+usage 1 if @ARGV != 2;
+
+open(F, $ARGV[0]) || die "$ARGV[0]: $!\n"; sysread F, $prog, -s F; close F;
+
+$prog_len = length $prog;
+
+for (sort keys %{$opt_bytes}) {
+  $addr = num $_;
+  $val = num $opt_bytes->{$_};
+  die sprintf("0x%x", $addr) . ": larger than $ARGV[0]\n" if $addr >= $prog_len;
+  substr($prog, $addr, 1) = pack("C", $val);
+  printf "[0x%08x] = 0x%02x\n", $addr, $val;
+}
+
+for (sort keys %{$opt_words}) {
+  $addr = num $_;
+  $val = num $opt_words->{$_};
+  die sprintf("0x%x", $addr) . ": larger than $ARGV[0]\n" if $addr >= $prog_len - 1;
+  substr($prog, $addr, 2) = pack("v", $val);
+  printf "[0x%08x] = 0x%04x\n", $addr, $val;
+}
+
+for (sort keys %{$opt_dwords}) {
+  $addr = num $_;
+  $val = num $opt_dwords->{$_};
+  die sprintf("0x%x", $addr) . ": larger than $ARGV[0]\n" if $addr >= $prog_len - 3;
+  substr($prog, $addr, 4) = pack("V", $val);
+  printf "[0x%08x] = 0x%08x\n", $addr, $val;
+}
+
+open(F, "+<$ARGV[1]") || die "$ARGV[1]: $!\n";
+$len = $prog_len < 0x1be ? $prog_len : 0x1be;
+syswrite F, $prog, $len;
+if($prog_len > 0x1fe) {
+  sysseek F, 0x1fe, 0;
+  syswrite F, substr($prog, 0x1fe), $prog_len - 0x1fe;
+}
+close F;
+
+
+sub usage
+{
+  my $err = shift;
+
+  if($err) {
+    print STDERR "Try 'itest --help' for more information.\n";
+
+    exit $err;
+  }
+
+  print <<"  usage";
+Usage: itest [OPTIONS] PROGRAM IMAGE
+Copy PROGRAM to disk image IMAGE.
+
+  --byte ADDR=N         Write N to ADDR in PROGRAM.
+  --word ADDR=N         Write N to ADDR in PROGRAM.
+  --dword ADDR=N        Write N to ADDR in PROGRAM.
+  --help                Write this help text.
+
+  usage
+
+  exit $err;
+}
+
+
+sub num
+{
+  $_[0] =~ /^0/ ? oct $_[0] : $_[0]
+}
+

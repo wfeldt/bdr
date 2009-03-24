@@ -1,13 +1,15 @@
+; test_01
+;
+; Read [sector_count = 0x1ba] blocks starting at 0 from disk 0x81 and
+; compare with disk 0x80 starting at [sector_start = 0x1b6].
+;
+
 			bits 16
 
 			%include "x86emu.inc"
 
 disk_buf		equ 8000h
 disk_buf2		equ 8200h
-
-sector_start		equ 1024*2	; 1MB
-; sector_max		equ 2
-sector_max		equ 1024*20	; 10MB
 
 			section .text
 
@@ -54,7 +56,7 @@ check_10:
 			rep movsw
 
 			mov eax,[cnt]
-			add eax,sector_start
+			add eax,[sector_start]
 			mov [edd.sector],eax
 			mov word [edd.count],1
 			mov dl,80h
@@ -64,7 +66,7 @@ check_10:
 			pop dx
 			mov [edd.drive],dl
 
-			x86emu_print "sector2 ok"
+;			x86emu_print "sector2 ok"
 
 ;			x86emu_dump x86emu_dump_mem_default
 
@@ -77,12 +79,16 @@ check_10:
 			stc
 			jnz check_90
 
-			inc dword [cnt]
-			cmp dword [cnt],sector_max
+			x86emu_trace_on x86emu_trace_default
+
+			mov eax,[cnt]
+			inc eax
+			mov [cnt],eax
+			cmp eax,[sector_count]
 
 			jb check_10
 check_90:
-			x86emu_trace_on x86emu_trace_default
+;			x86emu_trace_on x86emu_trace_default
 
 			ret
 
@@ -228,15 +234,21 @@ edd_checked		db 2
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 msg_nl			db 13, 10
 msg_no_msg		db 0
-msg_hello		db "starting test1", 13, 10, 0
-msg_done		db 10, "test1 done", 0
+msg_hello		db "starting test_01", 13, 10, 0
+msg_done		db 10, "test_01 done", 0
 msg_check_ok		db 'check ok', 13, 10, 0
 msg_check_failed	db 'check failed', 13, 10, 0
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 %if ($ - $$) > 1b8h
-%error "test1 too big"
+%error "test_01 too big"
 %endif
 
-			times 1b8h - ($ - $$) db 0
+mbr_fill		times 1b6h - ($ - $$) db 0
 
+sector_start		dd 0
+sector_count		dd 0
+
+			times 40h db 0
+
+			dw 0aa55h
