@@ -40,13 +40,18 @@ int13_err_last		db 0
 edd			dw 10h		; edd.packet
 edd_count		dw 0
 edd_buf			dd 0
-edd_mapped_sector	dd 0,0
+edd_mapped_sector	dd 0, 0
 
-edd_real_sector		dd 0,0
+edd_real_sector		dd 0, 0
 edd_mapped_count	dw 0
 edd_real_count		dw 0
 edd_mapped_drive	db 0
+edd_mapped_drive_idx	db 0
+edd_mapped_edd_checked	dw 0		; 16 bits for 16 drives
+edd_mapped_edd_res	dw 0		; 16 bits for 16 drives
+edd_mapped_geo_checked	dw 0		; 16 bits for 16 drives
 edd_buf_lin		dd 0
+geo_values		times 16 dd 0
 
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -176,7 +181,7 @@ f_02:			; read
 			mov [edd_real_sector],eax
 			mov [edd_real_sector+4],edx
 
-			call read_sec
+			call access_sec
 			jmp f_02_90
 
 f_02_80:
@@ -245,7 +250,7 @@ f_42:			; edd read
 			mov eax,[es:si+edd.sector+4]
 			mov [edd_real_sector+4],eax
 
-			call read_sec
+			call access_sec
 
 f_42_90:
 			call set_error
@@ -304,20 +309,20 @@ f_48_90:
 ; Return:
 ;   ah: error code
 ;
-read_sec:
+access_sec:
 
-read_sec_20:
+access_sec_20:
 			call map_sector
 
 			mov ax,[edd_mapped_count]
 			or ax,ax
-			jz read_sec_80
+			jz access_sec_80
 
 			mov dx,[edd_real_count]
 			cmp ax,dx
-			jbe read_sec_40
+			jbe access_sec_40
 			xchg ax,dx
-read_sec_40:
+access_sec_40:
 			movzx edx,ax
 			mov [edd_count],ax
 
@@ -336,29 +341,18 @@ read_sec_40:
 			shl edx,9
 			add [edd_buf_lin],edx
 
-			push ds
-
-			mov ah,42h
-			mov si,edd
-			mov dl,[edd_mapped_drive]
-			push bp
-			pushf
-			call far [bdrive.old_int13]
-			pop bp
-
-			pop ds
-
-			jc read_sec_90
+			call read
+			jc access_sec_90
 
 			cmp word [edd_real_count],0
-			jnz read_sec_20
+			jnz access_sec_20
 
 			mov ah,0
-			jmp read_sec_90
+			jmp access_sec_90
 
-read_sec_80:
+access_sec_80:
 			mov ah,4
-read_sec_90:
+access_sec_90:
 			ret
 
 
@@ -370,9 +364,76 @@ set_error:
 			cmc
 			ret
 
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+read:
+			push ds
+			push bp
+
+			call edd_check
+			jc read_chs
+read_edd:
+			mov dl,[edd_mapped_drive]
+			mov si,edd
+			mov ah,42h
+			pushf
+			call far [bdrive.old_int13]
+			jmp read_90
+
+
+read_chs:
+			; classic interface; but if block number turns out
+			; to be too big, try edd anyway
+
+			cmp dword [edd_mapped_sector+4],0
+			jnz read_edd
+
+			call get_geo
+			jc read_90
+
+			mov ax,cx
+			shr cl,6
+			xchg cl,ch
+			and al,3fh
+			inc dh
+			mov bl,al
+			mul dh
+			; ax = s*h
+			xchg ax,di
+			mov ax,[edd_mapped_sector]
+			mov dx,[edd_mapped_sector+2]
+			cmp dx,di
+			jae read_edd
+			div di
+			; ax = c, dx = s*h
+			cmp ax,cx
+			ja read_edd
+			shl ah,6
+			xchg al,ah
+			xchg ax,dx
+			; dx = c
+			div bl
+			; ah = s-1, al = h
+			add dl,ah
+			inc dx
+			mov ch,al
+			xchg cx,dx
+
+			mov al,[edd_count]
+			les bx,[edd_buf]
+			mov ah,2
+			pushf
+			call far [bdrive.old_int13]
+
+read_90:
+			pop bp
+			pop ds
+			ret
+
+
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 ;
-; map edd_real_sector to edd_mapped_sector & edd_mapped_drive
+; map edd_real_sector to edd_mapped_sector & edd_mapped_drive_idx & edd_mapped_drive
 ; edd_mapped_count = 0 -> mapping failed
 ;
 map_sector:
@@ -419,12 +480,84 @@ map_sector_60:
 			mov [edd_mapped_sector],eax
 			mov [edd_mapped_sector+4],edx
 			shr ebx,28
+			mov [edd_mapped_drive_idx],bl
 			mov al,[bx+bht+bht.drive_map]
 			mov [edd_mapped_drive],al
 
 map_sector_90:
 			pop bp
 			pop es
+			ret
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+;
+; CF: 0 = edd ok, 1 = no edd
+;
+edd_check:
+			mov ax,1
+			mov cl,[edd_mapped_drive_idx]
+			shl ax,cl
+			test ax,[edd_mapped_edd_checked]
+			jz edd_check_50
+
+			test ax,[edd_mapped_edd_res]
+			jnz edd_check_90
+			stc
+			jmp edd_check_90
+
+edd_check_50:
+			or [edd_mapped_edd_checked],ax
+
+			push ax
+			mov ah,41h
+			mov bx,55aah
+			mov dl,[edd_mapped_drive]
+			pushf
+			call far [bdrive.old_int13]
+			pop ax
+			jc edd_check
+			cmp bx,0aa55h
+			jnz edd_check
+			test cl,1
+			jz edd_check
+			or [edd_mapped_edd_res],ax
+			jmp edd_check
+edd_check_90:
+			ret
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+;
+; CF: 0 = geo ok, 1 = no geo
+;
+get_geo:
+			mov ax,1
+			mov cl,[edd_mapped_drive_idx]
+			movzx bx,cl
+			shl bx,2
+			shl ax,cl
+			test ax,[edd_mapped_geo_checked]
+			jz get_geo_50
+			mov cx,[geo_values+bx]
+			mov dh,[geo_values+bx+2]
+			or cx,cx
+			cmp cx,1
+			jmp get_geo_90
+get_geo_50:
+			or [edd_mapped_geo_checked],ax
+
+			push bx
+			mov ah,8
+			mov dl,[edd_mapped_drive]
+			pushf
+			call far [bdrive.old_int13]
+			pop bx
+			jc get_geo
+			mov [geo_values+bx],cx
+			mov [geo_values+bx+2],dh
+			jmp get_geo
+get_geo_90:
 			ret
 
 
