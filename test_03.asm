@@ -1,10 +1,10 @@
-; test_02
+; test_03
 ;
 ; Read [sector_count = 0x1ba] blocks starting at 0 from disk 0x81 and
 ; compare with disk 0x80 starting at [sector_start = 0x1b6].
 ;
 ; Use various block sizes.
-; Use EDD interface.
+; Use CHS interface.
 ;
 
 			bits 16
@@ -27,6 +27,8 @@ main_10:
 
 			mov [edd.drive],dl
 
+;			x86emu_trace_on x86emu_trace_default
+
 			call disk_read
 
 			mov si,msg_hello
@@ -44,21 +46,12 @@ main_30:
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 disk_read:
-			call edd_check
-			jc disk_read_chs
-disk_read_edd:
-			mov si,edd.packet
-			mov word [si],10h
-			mov ah,42h
-			jmp int_13
 
-
-disk_read_chs:
 			; classic interface; but if block number turns out
 			; to be too big, try edd anyway
 
 			cmp dword [edd.sector+4],0
-			jnz disk_read_edd
+			jnz disk_read_chs_90
 			mov ah,8
 			xor di,di
 			call int_13
@@ -75,12 +68,15 @@ disk_read_chs:
 			xchg ax,di
 			mov ax,[edd.sector]
 			mov dx,[edd.sector+2]
+;			x86emu_print "linear dx:ax"
+;			x86emu_trace_on x86emu_trace_regs
+;			x86emu_trace_off x86emu_trace_regs
 			cmp dx,di
-			jae disk_read_edd
+			jae disk_read_chs_90
 			div di
 			; ax = c, dx = s*h
 			cmp ax,cx
-			ja disk_read_edd
+			ja disk_read_chs_90
 			shl ah,6
 			xchg al,ah
 			xchg ax,dx
@@ -95,6 +91,9 @@ disk_read_chs:
 			mov al,[edd.count]
 			les bx,[edd.buf]
 			mov ah,2
+;			x86emu_print "chs"
+;			x86emu_trace_on x86emu_trace_regs
+;			x86emu_trace_off x86emu_trace_regs
 			call int_13
 			push word 0
 			pop es
@@ -188,7 +187,7 @@ edd_checked		db 2
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 %if ($ - $$) > 1b8h
-%error "test_02 too big"
+%error "test_03 too big"
 %endif
 
 mbr_fill		times 1b6h - ($ - $$) db 0
@@ -207,8 +206,8 @@ buf2_seg		equ 3000h
 
 msg_nl			db 10
 msg_no_msg		db 0
-msg_done		db 10, "test_02 done", 0
-msg_hello		db "starting test_02", 10, 0
+msg_done		db 10, "test_03 done", 0
+msg_hello		db "starting test_03", 10, 0
 msg_check_ok		db 'check ok', 10, 0
 msg_check_failed	db 'check failed', 10, 0
 msg_step		db 13, 'step ', 0
@@ -216,7 +215,7 @@ msg_step		db 13, 'step ', 0
 			align 4
 cnt			dd 0
 block_size		dd 0
-block_sizes		db 5, 7, 26, 32, 50, 64
+block_sizes		db 1, 5, 7, 26, 32, 50, 64
 block_sizes_end		equ $
 step			db 0
 
@@ -278,6 +277,8 @@ check_10:
 			call disk_read
 			jc check_90
 
+;			x86emu_print "read 1 ok"
+
 			mov dword [edd.buf],buf2_seg << 16
 			mov eax,[cnt]
 			add eax,[sector_start]
@@ -291,6 +292,8 @@ check_10:
 			pop dx
 			mov [edd.drive],dl
 			jc check_90
+
+;			x86emu_print "read 2 ok"
 
 			mov ax,[block_size]
 			mov bx,buf1_seg
@@ -308,6 +311,8 @@ check_50:
 			add dx,20h
 			dec ax
 			jnz check_50
+
+;			x86emu_print "cmp ok"
 
 			mov eax,[cnt]
 			add eax,[block_size]

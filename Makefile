@@ -1,4 +1,4 @@
-all: bdr test_01.bin test_02.bin
+all: bdr test_01.bin test_02.bin test_03.bin
 
 bdr: bdr.c mbr.o bdrive.o
 	gcc -g -O2 -Wall $^ -o $@
@@ -37,6 +37,20 @@ test_02: test_02.bin
 	dd if=/mnt/boot.img of=test_02.img bs=1M seek=1 conv=notrunc
 	umnt
 
+test_03: test_03.bin
+	./setup_img test_03.img 50M 100M
+	mnt test_03.img
+	sw 0 ./bdr --create-map --add-to-mbr test_03.img --bios 0x81 /mnt/boot.img
+	mnt /mnt/boot.img
+	sw 0 dd if=/dev/urandom of=/mnt/x || true
+	umnt
+	./itest \
+	  --dword 0x1b6=$$((1024*2)) \
+	  --dword 0x1ba=$$((`stat -c %s /mnt/boot.img`/512)) \
+	  test_03.bin /mnt/boot.img
+	dd if=/mnt/boot.img of=test_03.img bs=1M seek=1 conv=notrunc
+	umnt
+
 test-r0:
 	./tst-r0 102400 204800
 
@@ -66,6 +80,9 @@ test_01.bin: test_01.asm
 
 test_02.bin: test_02.asm
 	nasm -O99 -f bin -l test_02.lst -o test_02.bin $<
+
+test_03.bin: test_03.asm
+	nasm -O99 -f bin -l test_03.lst -o test_03.bin $<
 
 clean:
 	rm -f *~ bdr *.bin *.lst *.o bdrive_res.hex

@@ -15,6 +15,15 @@ pa_eax			equ 28
 pa_ds			equ 32
 pa_es			equ 34
 
+pa_al			equ pa_eax
+pa_ah			equ pa_eax+1
+pa_bl			equ pa_ebx
+pa_bh			equ pa_ebx+1
+pa_cl			equ pa_ecx
+pa_ch			equ pa_ecx+1
+pa_dl			equ pa_edx
+pa_dh			equ pa_edx+1
+
 			; must be first
 			%include "bdrive_struc.inc"
 			; must follow bdrive_struc.inc
@@ -39,6 +48,8 @@ edd_real_count		dw 0
 edd_mapped_drive	db 0
 edd_buf_lin		dd 0
 
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 new_int13:
 			cmp dl,[cs:bdrive.drive]
 			jz new_int13_10
@@ -86,7 +97,7 @@ new_int13_30:
 new_int13_80:
 			stc
 			mov ah,[int13_err]
-			mov [bp+pa_eax+1],ah
+			mov [bp+pa_ah],ah
 new_int13_90:
 			popad
 			pop ds
@@ -98,6 +109,7 @@ new_int13_90:
 			iret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_00:			; recalibrate
 f_04:			; verify
 f_05:			; format floppy
@@ -115,6 +127,7 @@ f_49:			; edd media change
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_01:			; last status
 			mov ah,[int13_err_last]
 			mov byte [int13_err],0
@@ -123,15 +136,62 @@ f_01:			; last status
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_02:			; read
 
+			movzx ax,byte [bp+pa_al]
+			mov [edd_real_count],ax
+			or ax,ax
+			jz f_02_90
+
+			movzx eax,word [bp+pa_ebx]
+			movzx edx,word [bp+pa_es]
+			shl edx,4
+			add eax,edx
+			mov [edd_buf_lin],eax
+
+			movzx ecx,word [bp+pa_ecx]
+			movzx eax,cl
+			xchg cl,ch
+			shr ch,6
+			cmp cx,[bht+bht.disk_geo_cylinders]
+			jae f_02_80
+			movzx edx,byte [bp+pa_dh]
+			movzx ebx,byte [bht+bht.disk_geo_heads]
+			cmp dl,bl
+			jae f_02_80
+			and al,3fh
+			cmp al,[bht+bht.disk_geo_sectors]
+			ja f_02_80
+			dec ax
+			js f_02_80
+
+			imul ecx,ebx
+			add ecx,edx
+			movzx ebx,byte [bht+bht.disk_geo_sectors]
+			imul ecx,ebx
+			add eax,ecx
+			xor edx,edx
+
+			mov [edd_real_sector],eax
+			mov [edd_real_sector+4],edx
+
+			call read_sec
+			jmp f_02_90
+
+f_02_80:
+			mov ah,4
+f_02_90:
+			call set_error
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_03:			; write
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_08:			; drive params
 			mov cx,[bht+bht.disk_geo_cylinders]
 			dec cx
@@ -155,6 +215,7 @@ f_08_80:
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_41:			; edd install check
 			mov word [bp+pa_ebx],0aa55h
 			mov word [bp+pa_eax],3000h
@@ -163,13 +224,10 @@ f_41:			; edd install check
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_42:			; edd read
 
 			mov es,[bp+pa_ds]
-
-			xor ax,ax
-			mov [bp+pa_eax+1],ah
-			mov [int13_err],ah
 
 			mov ax,[es:si+edd.count]
 			mov [edd_real_count],ax
@@ -187,71 +245,26 @@ f_42:			; edd read
 			mov eax,[es:si+edd.sector+4]
 			mov [edd_real_sector+4],eax
 
-f_42_20:
-			call map_sector
+			call read_sec
 
-			mov ax,[edd_mapped_count]
-			or ax,ax
-			jz f_42_80
-
-			mov dx,[edd_real_count]
-			cmp ax,dx
-			jbe f_42_40
-			xchg ax,dx
-f_42_40:
-			movzx edx,ax
-			mov [edd_count],ax
-
-			mov eax,[edd_buf_lin]
-			mov ebx,eax
-			shr eax,4
-			shl eax,16
-			mov ax,bx
-			and ax,0fh
-			mov [edd_buf],eax
-
-			sub [edd_real_count],dx
-			add [edd_real_sector],edx
-			adc dword [edd_real_sector+4],0
-
-			shl edx,9
-			add [edd_buf_lin],edx
-
-			push ds
-
-			mov ah,42h
-			mov si,edd
-			mov dl,[edd_mapped_drive]
-			pushf
-			call far [bdrive.old_int13]
-
-			pop ds
-
-			jc f_42_80
-
-			cmp word [edd_real_count],0
-			jnz f_42_20
-
-			jmp f_42_90
-
-f_42_80:
-			mov byte [bp+pa_eax+1],4
-			mov byte [int13_err],4
-			stc
 f_42_90:
+			call set_error
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_43:			; edd write
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_45:			; edd lock/unlock
 			mov word [bp+pa_eax],0
 			clc
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_48:			; edd drive params
 			mov es,[bp+pa_ds]
 			mov ax,[es:si]
@@ -279,18 +292,92 @@ f_48_70:
 			mov ah,1
 			stc
 f_48_80:
-			mov [bp+pa_eax+1],ah
+			mov [bp+pa_ah],ah
 			mov [int13_err],ah
 f_48_90:
 			ret
 
 
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+; Read sectors.
+;
+; Return:
+;   ah: error code
+;
+read_sec:
+
+read_sec_20:
+			call map_sector
+
+			mov ax,[edd_mapped_count]
+			or ax,ax
+			jz read_sec_80
+
+			mov dx,[edd_real_count]
+			cmp ax,dx
+			jbe read_sec_40
+			xchg ax,dx
+read_sec_40:
+			movzx edx,ax
+			mov [edd_count],ax
+
+			mov eax,[edd_buf_lin]
+			mov ebx,eax
+			shr eax,4
+			shl eax,16
+			mov ax,bx
+			and ax,0fh
+			mov [edd_buf],eax
+
+			sub [edd_real_count],dx
+			add [edd_real_sector],edx
+			adc dword [edd_real_sector+4],0
+
+			shl edx,9
+			add [edd_buf_lin],edx
+
+			push ds
+
+			mov ah,42h
+			mov si,edd
+			mov dl,[edd_mapped_drive]
+			push bp
+			pushf
+			call far [bdrive.old_int13]
+			pop bp
+
+			pop ds
+
+			jc read_sec_90
+
+			cmp word [edd_real_count],0
+			jnz read_sec_20
+
+			mov ah,0
+			jmp read_sec_90
+
+read_sec_80:
+			mov ah,4
+read_sec_90:
+			ret
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+set_error:
+			mov [bp+pa_ah],ah
+			mov [int13_err],ah
+			cmp ah,1
+			cmc
+			ret
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 ;
 ; map edd_real_sector to edd_mapped_sector & edd_mapped_drive
 ; edd_mapped_count = 0 -> mapping failed
 ;
 map_sector:
 			push es
+			push bp
 			mov es,[bdrive.map_seg]
 			mov cx,[bht+bht.map_entries]
 
@@ -336,19 +423,8 @@ map_sector_60:
 			mov [edd_mapped_drive],al
 
 map_sector_90:
+			pop bp
 			pop es
 			ret
-
-
-%if 0
-			pushf
-			call far [cs:bdrive.old_int13]
-			push ax
-			lahf
-			mov [esp+6],ah
-			pop ax
-			iret
-
-%endif
 
 

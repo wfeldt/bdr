@@ -3,6 +3,8 @@
 ; Read [sector_count = 0x1ba] blocks starting at 0 from disk 0x81 and
 ; compare with disk 0x80 starting at [sector_start = 0x1b6].
 ;
+; Read one sector at a time.
+;
 
 			bits 16
 
