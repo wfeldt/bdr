@@ -108,7 +108,7 @@ some_ret_instr:
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 ; Variables that need to be in the first sector.
 ;
-hello			db "bdrive 0.3", 13, 10, 0
+hello			db "bdrive 0.4", 13, 10, 0
 
 mbr_disk_read		dw 0
 mbr_dap			dw 0
