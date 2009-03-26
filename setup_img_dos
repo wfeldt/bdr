@@ -1,0 +1,30 @@
+#! /bin/bash
+
+file=$1
+start=$2
+size=$3
+
+if [ -z "$size" ] ; then
+  echo "usage: setup_img file start size [mbr]"
+  exit 1
+fi
+
+if [ -n "$start" ] ; then
+  start="--part-ofs $start"
+fi
+
+umnt
+./hdimage --verbose $start --size $size --chs 0 7 19 --mkfs xfs $file
+mnt $file
+sw 0 chmod 777 /mnt
+./hdimage --verbose\
+  --type 1\
+  --size 10M\
+  --chs 0 4 16\
+  --mkfs fat\
+  --mbr dos/mbr\
+  --boot-fat12 dos/freedos_boot.fat12\
+  --boot-fat16 dos/freedos_boot.fat16\
+  --add-files dos/kernel.sys dos/command.com dos/autoexec.bat dos/config.sys\
+  -- /mnt/boot.img
+umnt

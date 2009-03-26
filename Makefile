@@ -9,11 +9,24 @@ test:
 	sw 0 ./bdr --create-map --add-to-mbr test.img /mnt/boot.img
 	umnt
 
+test_dos:
+	./setup_img_dos test_dos.img 50M 100M
+	mnt test_dos.img
+	sw 0 ./bdr --create-map --geo 4,16 --bios 0x80 --add-to-mbr test_dos.img /mnt/boot.img
+	umnt
+
 test_grub:
 	./setup_img test_grub.img 50M 100M
 	mnt test_grub.img
-	sw 0 ./bdr --create-map --add-to-mbr test_grub.img /mnt/boot.img
+	sw 0 ./bdr --create-map --geo 4,16 --bios 0x80 --add-to-mbr test_grub.img /mnt/boot.img
 	./setup_grub /mnt/boot.img
+	umnt
+
+test_grub2:
+	./setup_img test_grub2.img 50M 100M
+	mnt test_grub2.img
+	sw 0 ./bdr --create-map --geo 4,16 --bios 0x83 --add-to-mbr test_grub2.img /mnt/boot.img
+	./setup_grub /mnt/boot.img 3
 	umnt
 
 test_01: test_01.bin

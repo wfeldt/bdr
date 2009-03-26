@@ -1,10 +1,15 @@
 #! /bin/bash
 
 file=$1
+drive=$2
 
 if [ -z "$file" ] ; then
   echo "usage: setup_grub image_file"
   exit 1
+fi
+
+if [ -z "$drive" ] ; then
+  drive=0
 fi
 
 mnt $file
@@ -15,20 +20,21 @@ sw 0 cp /boot/vmlinuz /boot/initrd /boot/message /mnt/boot
 sw 0 sh -c 'cat >/mnt/boot/grub/menu.lst' <<zap
 default 0
 timeout 20
-gfxmenu (hd0,0)/boot/message
+gfxmenu (hd${drive},0)/boot/message
 
 title Test 1
-  root (hd0,0)
+  root (hd${drive},0)
   kernel /boot/vmlinuz vga=0x314 splash=silent showopts
   initrd /boot/initrd
 
 title Test 2
-  root (hd0,0)
+  root (hd${drive},0)
   kernel /boot/vmlinuz vga=0x314 splash=silent showopts
   initrd /boot/initrd
 zap
 
 umnt
 
-echo -e "device (hd0) /mnt/boot.img\nsetup --prefix=/boot/grub (hd0) (hd0,0)" | sw 0 grub --batch
-
+echo "(hd0) /dev/null" >setup_grub.tmp
+echo -e "device (hd${drive}) /mnt/boot.img\nsetup --prefix=/boot/grub (hd${drive}) (hd${drive},0)" | sw 0 grub --batch  --device-map=setup_grub.tmp --no-config-file
+rm -f setup_grub.tmp
