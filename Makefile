@@ -9,6 +9,13 @@ test:
 	sw 0 ./bdr --create-map --add-to-mbr test.img /mnt/boot.img
 	umnt
 
+test_grub:
+	./setup_img test_grub.img 50M 100M
+	mnt test_grub.img
+	sw 0 ./bdr --create-map --add-to-mbr test_grub.img /mnt/boot.img
+	./setup_grub /mnt/boot.img
+	umnt
+
 test_01: test_01.bin
 	./setup_img test_01.img 50M 100M
 	mnt test_01.img

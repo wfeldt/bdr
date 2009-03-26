@@ -53,6 +53,8 @@ edd_mapped_geo_checked	dw 0		; 16 bits for 16 drives
 edd_buf_lin		dd 0
 geo_values		times 16 dd 0
 
+access_op		db 0
+
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 new_int13:
@@ -116,14 +118,12 @@ new_int13_90:
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_00:			; recalibrate
-f_04:			; verify
 f_05:			; format floppy
 f_06:			; format disk
 f_07:			; format disk
 f_09:			; set drive params
 f_0c:			; seek
 f_0d:			; reset
-f_44:			; edd verify
 f_46:			; edd eject
 f_47:			; edd seek
 f_49:			; edd media change
@@ -144,55 +144,23 @@ f_01:			; last status
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_02:			; read
 
-			movzx ax,byte [bp+pa_al]
-			mov [edd_real_count],ax
-			or ax,ax
-			jz f_02_90
+			mov byte [access_op],2
+			call rwv_chs
+			ret
 
-			movzx eax,word [bp+pa_ebx]
-			movzx edx,word [bp+pa_es]
-			shl edx,4
-			add eax,edx
-			mov [edd_buf_lin],eax
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+f_03:			; write
 
-			movzx ecx,word [bp+pa_ecx]
-			movzx eax,cl
-			xchg cl,ch
-			shr ch,6
-			cmp cx,[bht+bht.disk_geo_cylinders]
-			jae f_02_80
-			movzx edx,byte [bp+pa_dh]
-			movzx ebx,byte [bht+bht.disk_geo_heads]
-			cmp dl,bl
-			jae f_02_80
-			and al,3fh
-			cmp al,[bht+bht.disk_geo_sectors]
-			ja f_02_80
-			dec ax
-			js f_02_80
-
-			imul ecx,ebx
-			add ecx,edx
-			movzx ebx,byte [bht+bht.disk_geo_sectors]
-			imul ecx,ebx
-			add eax,ecx
-			xor edx,edx
-
-			mov [edd_real_sector],eax
-			mov [edd_real_sector+4],edx
-
-			call access_sec
-			jmp f_02_90
-
-f_02_80:
-			mov ah,4
-f_02_90:
-			call set_error
+			mov byte [access_op],3
+			call rwv_chs
 			ret
 
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-f_03:			; write
+f_04:			; verify
+
+			mov byte [access_op],4
+			call rwv_chs
 			ret
 
 
@@ -232,38 +200,30 @@ f_41:			; edd install check
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_42:			; edd read
 
-			mov es,[bp+pa_ds]
-
-			mov ax,[es:si+edd.count]
-			mov [edd_real_count],ax
-			or ax,ax
-			jz f_42_90
-
-			movzx eax,word [es:si+edd.buf]
-			movzx edx,word [es:si+edd.buf+2]
-			shl edx,4
-			add eax,edx
-			mov [edd_buf_lin],eax
-
-			mov eax,[es:si+edd.sector]
-			mov [edd_real_sector],eax
-			mov eax,[es:si+edd.sector+4]
-			mov [edd_real_sector+4],eax
-
-			call access_sec
-
-f_42_90:
-			call set_error
+			mov byte [access_op],2
+			call rwv_edd
 			ret
 
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_43:			; edd write
+
+			mov byte [access_op],3
+			call rwv_edd
+			ret
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+f_44:			; edd verify
+
+			mov byte [access_op],4
+			call rwv_edd
 			ret
 
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 f_45:			; edd lock/unlock
+
 			mov word [bp+pa_eax],0
 			clc
 			ret
@@ -300,6 +260,90 @@ f_48_80:
 			mov [bp+pa_ah],ah
 			mov [int13_err],ah
 f_48_90:
+			ret
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+set_error:
+			mov [bp+pa_ah],ah
+			mov [int13_err],ah
+			cmp ah,1
+			cmc
+			ret
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+rwv_edd:
+			mov es,[bp+pa_ds]
+
+			mov ax,[es:si+edd.count]
+			mov [edd_real_count],ax
+			or ax,ax
+			jz rwv_edd_90
+
+			movzx eax,word [es:si+edd.buf]
+			movzx edx,word [es:si+edd.buf+2]
+			shl edx,4
+			add eax,edx
+			mov [edd_buf_lin],eax
+
+			mov eax,[es:si+edd.sector]
+			mov [edd_real_sector],eax
+			mov eax,[es:si+edd.sector+4]
+			mov [edd_real_sector+4],eax
+
+			call access_sec
+rwv_edd_90:
+			call set_error
+			ret
+
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+rwv_chs:
+			movzx ax,byte [bp+pa_al]
+			mov [edd_real_count],ax
+			or ax,ax
+			jz rwv_chs_90
+
+			movzx eax,word [bp+pa_ebx]
+			movzx edx,word [bp+pa_es]
+			shl edx,4
+			add eax,edx
+			mov [edd_buf_lin],eax
+
+			movzx ecx,word [bp+pa_ecx]
+			movzx eax,cl
+			xchg cl,ch
+			shr ch,6
+			cmp cx,[bht+bht.disk_geo_cylinders]
+			jae rwv_chs_80
+			movzx edx,byte [bp+pa_dh]
+			movzx ebx,byte [bht+bht.disk_geo_heads]
+			cmp dl,bl
+			jae rwv_chs_80
+			and al,3fh
+			cmp al,[bht+bht.disk_geo_sectors]
+			ja rwv_chs_80
+			dec ax
+			js rwv_chs_80
+
+			imul ecx,ebx
+			add ecx,edx
+			movzx ebx,byte [bht+bht.disk_geo_sectors]
+			imul ecx,ebx
+			add eax,ecx
+			xor edx,edx
+
+			mov [edd_real_sector],eax
+			mov [edd_real_sector+4],edx
+
+			call access_sec
+			jmp rwv_chs_90
+
+rwv_chs_80:
+			mov ah,4
+rwv_chs_90:
+			call set_error
 			ret
 
 
@@ -341,7 +385,7 @@ access_sec_40:
 			shl edx,9
 			add [edd_buf_lin],edx
 
-			call read
+			call access
 			jc access_sec_90
 
 			cmp word [edd_real_count],0
@@ -357,39 +401,31 @@ access_sec_90:
 
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-set_error:
-			mov [bp+pa_ah],ah
-			mov [int13_err],ah
-			cmp ah,1
-			cmc
-			ret
-
-
-; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-read:
+access:
 			push ds
 			push bp
 
 			call edd_check
-			jc read_chs
-read_edd:
+			jc access_chs
+access_edd:
 			mov dl,[edd_mapped_drive]
 			mov si,edd
-			mov ah,42h
+			mov ah,[access_op]
+			add ah,40h
 			pushf
 			call far [bdrive.old_int13]
-			jmp read_90
+			jmp access_90
 
 
-read_chs:
+access_chs:
 			; classic interface; but if block number turns out
 			; to be too big, try edd anyway
 
 			cmp dword [edd_mapped_sector+4],0
-			jnz read_edd
+			jnz access_edd
 
 			call get_geo
-			jc read_90
+			jc access_90
 
 			mov ax,cx
 			shr cl,6
@@ -403,11 +439,11 @@ read_chs:
 			mov ax,[edd_mapped_sector]
 			mov dx,[edd_mapped_sector+2]
 			cmp dx,di
-			jae read_edd
+			jae access_edd
 			div di
 			; ax = c, dx = s*h
 			cmp ax,cx
-			ja read_edd
+			ja access_edd
 			shl ah,6
 			xchg al,ah
 			xchg ax,dx
@@ -421,11 +457,11 @@ read_chs:
 
 			mov al,[edd_count]
 			les bx,[edd_buf]
-			mov ah,2
+			mov ah,[access_op]
 			pushf
 			call far [bdrive.old_int13]
 
-read_90:
+access_90:
 			pop bp
 			pop ds
 			ret
