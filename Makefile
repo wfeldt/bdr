@@ -1,3 +1,14 @@
+ARCH := $(shell uname -m)
+ifneq ($(filter i386 i486 i586 i686, $(ARCH)),)
+ARCH := i386
+endif
+
+ifneq ($(filter x86_64, $(ARCH)),)
+ELF_TARGET := elf64-x86-64
+else
+ELF_TARGET := elf32-i386
+endif
+
 all: bdr test_01.bin test_02.bin test_03.bin
 
 bdr: bdr.c mbr.o bdrive.o
@@ -77,7 +88,7 @@ test-r0:
 mbr.o: mbr.asm
 	nasm -O99 -f bin -l $*.lst -o $*.bin $<
 	./mbr_size mbr.lst
-	objcopy -B i386 -I binary -O elf32-i386 \
+	objcopy -B i386 -I binary -O $(ELF_TARGET) \
 	  --redefine-sym _binary_$*_bin_start=$*_start \
 	  --redefine-sym _binary_$*_bin_end=$*_end \
 	  --strip-symbol _binary_$*_bin_size \
@@ -85,7 +96,7 @@ mbr.o: mbr.asm
 
 bdrive.o: bdrive.asm bdrive_res.hex
 	nasm -O99 -f bin -l $*.lst -o $*.bin $<
-	objcopy -B i386 -I binary -O elf32-i386 \
+	objcopy -B i386 -I binary -O $(ELF_TARGET) \
 	  --redefine-sym _binary_$*_bin_start=$*_start \
 	  --redefine-sym _binary_$*_bin_end=$*_end \
 	  --strip-symbol _binary_$*_bin_size \

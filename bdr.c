@@ -439,7 +439,7 @@ bdr_location_t *find_mapping(const char *file, int first_only)
           "  date: %u/%u/%u\n"
           "  size: %u sectors (bdr %u, map %u)\n"
           "   map: %u entries\n",
-          file, m1->start, s0_h.id,
+          file, (unsigned long long) m1->start, (unsigned long long) s0_h.id,
           mt & 0x1f, (mt >> 5) & 0xf, 2000 + (mt >> 9),
           bdr_image_len / SECTOR_SIZE,
           bdr_h.bdr_size, bdr_h.map_size,
@@ -681,7 +681,7 @@ map_t *bmap(const char *file)
   if(opt.verbose >= 2) {
     fprintf(stderr,
       "%s:\n  size = %lld (%u blocks)\n  map block size = %u\n  dev = %08x\n",
-      file, size, blocks, block_size, (unsigned) sbuf.st_dev
+      file, (long long) size, blocks, block_size, (unsigned) sbuf.st_dev
     );
   }
 
@@ -785,17 +785,24 @@ map_t *bmap(const char *file)
   if(opt.verbose >= 1) {
     printf("sector map:\n  drive      start   len\n");
     for(block = 0; block < blocks; block++) {
-      printf("     %2u %10llu %5u\n", map1->map[block].drive, map1->map[block].start, map1->map[block].len);
+      printf("     %2u %10llu %5u\n",
+        map1->map[block].drive,
+        (unsigned long long) map1->map[block].start,
+        map1->map[block].len
+      );
     }
   }
 
   if(opt.test != -1ll) {
     m = map_sector(map1, opt.test);
     if(m) {
-      printf("%s[%llu] -> %s[%llu]\n", file, opt.test, di->name, m->start);
+      printf("%s[%llu] -> %s[%llu]\n",
+        file, (unsigned long long) opt.test,
+        di->name, (unsigned long long) m->start
+      );
     }
     else {
-      printf("%s[%llu] -> ?\n", file, opt.test);
+      printf("%s[%llu] -> ?\n", file, (unsigned long long) opt.test);
     }
     m = free_map_entry(m);
   }
@@ -828,7 +835,7 @@ dev_info_t *dev_check(char *sysfs_dir, char *dev_name, unsigned dev_num)
   dev_info_t *di = NULL;
   loop_info_t *li = NULL;
   unsigned dev_id;
-  uint64_t u;
+  unsigned long long u;
   char *cname = NULL, *s;
 
   if(sys_scanf(sysfs_dir, "dev", "%u:%u", &major, &minor) == 2) {
@@ -875,7 +882,11 @@ dev_info_t *dev_check(char *sysfs_dir, char *dev_name, unsigned dev_num)
 
       if(opt.verbose >= 2) {
         fprintf(stderr, "  %s: %08x, start = %llu+%llu, size = %llu\n",
-          di->name, di->dev_num, di->start, di->loop_start, di->size
+          di->name,
+          di->dev_num,
+          (unsigned long long) di->start,
+          (unsigned long long) di->loop_start,
+          (unsigned long long) di->size
         );
       }
     }
