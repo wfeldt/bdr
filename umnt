@@ -1,0 +1,12 @@
+#! /bin/bash
+
+if [ "$1" = "" ] ; then
+  umount /mnt
+  exit 0
+fi
+
+while [ "$1" ] ; do
+  umount "$1"
+  shift
+done
+

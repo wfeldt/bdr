@@ -33,7 +33,7 @@ extern void mbr_start, mbr_end;
 #endif
 
 #define MAX_MAP_LEN	((1 << LEN_BITS) - 1)
-#define MAX_MAP_LEN	50	// testing
+//#define MAX_MAP_LEN	50	// testing
 
 #define MAX_DRIVES	(1 << DRIVE_BITS)
 
@@ -1102,7 +1102,7 @@ int verify_map(const char *file, map_t *map, int check_crc)
   unsigned char buf1[SECTOR_SIZE], buf2[SECTOR_SIZE];
   int fd[MAX_DRIVES], fd_file;
   map_entry_t *m = NULL;
-  int ok = 0;
+  int ok = 0, err = 0;
 
   if(!map) return 0;
 
@@ -1123,7 +1123,12 @@ int verify_map(const char *file, map_t *map, int check_crc)
   for(u = 0; u < MAX_DRIVES; u++) {
     if((di = map->drive[u])) {
       fd[u] = open(di->name, O_RDONLY | O_LARGEFILE);
-      if(fd[u] < 0) ok = 0;
+      if(fd[u] < 0) {
+        ok = 0;
+      }
+      else {
+        ioctl(fd[0], BLKFLSBUF, 0);
+      }
     }
     else {
       fd[u] = -1;
@@ -1138,6 +1143,7 @@ int verify_map(const char *file, map_t *map, int check_crc)
       }
 
       m = map_sector(map, u);
+
       if(m) {
         if(m->start) {
           if(lseek64(fd[m->drive], m->start * SECTOR_SIZE, 0) == (off64_t) -1) ok = 0;
@@ -1150,19 +1156,26 @@ int verify_map(const char *file, map_t *map, int check_crc)
       else {
         ok = 0;
       }
+
+      if(ok && memcmp(buf1, buf2, sizeof buf1)) {
+        // delay error to see all differences
+        err = 1;
+        fprintf(stderr, "oops: sectors differ: %s[%u] != %s[%llu]\n",
+          file, u,
+          map->drive[m->drive]->name,
+          (unsigned long long) m->start
+        );
+      }
+
       m = free_map_entry(m);
 
       if(!ok) break;
-
-      if(memcmp(buf1, buf2, sizeof buf1)) {
-        ok = 0;
-        break;
-      }
 
       if(check_crc && calc_crc(buf1)) ok = 0;
     }
   }
 
+  if(err) ok = 0;
 
   for(u = 0; u < MAX_DRIVES; u++) {
     if(fd[u] >= 0) close(fd[u]);

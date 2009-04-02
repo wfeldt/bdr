@@ -18,9 +18,9 @@ if [ -n "$mbr" ] ; then
   mbr="--mbr $mbr"
 fi
 
-umnt
+./umnt
 ./hdimage --verbose $start --size $size --chs 0 7 19 --mkfs xfs $file
-mnt $file
-sw 0 chmod 777 /mnt
+./mnt $file
+chmod 777 /mnt
 ./hdimage --verbose --type 1 --size 10M --chs 0 4 16 --mkfs fat $mbr /mnt/boot.img
-umnt
+./umnt

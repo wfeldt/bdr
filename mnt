@@ -1,0 +1,473 @@
+#! /usr/bin/perl
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# mnt version 1.0
+#
+# Mount various things like disks, files, (compressed) archives.
+#
+# Copyright (c) 2006-2009 Steffen Winterfeldt
+#
+# License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+# This is free software: you are free to change and redistribute it.
+#
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+use Getopt::Long;
+use bigint;
+
+sub cleanup;
+sub new_tmp_file;
+sub fstype;
+sub get_ptable;
+sub parse_ptable_entry;
+sub compressed;
+sub archive;
+sub do_cpio;
+sub get_gpt;
+
+# if you want to run it as normal user...
+$sudo = undef;
+
+$opt_mount_options = undef;
+$opt_verbose = 0;
+$opt_no_mount = 0;
+$opt_readonly = 0;
+
+Getopt::Long::Configure("bundling");
+
+GetOptions(
+  'options|o=s' => \$opt_mount_options,
+  'readonly|r'   => \$opt_readonly,
+  'verbose|v'   => sub { $opt_verbose++ },
+  'no-mount|n'   => sub { $opt_verbose = 2; $opt_no_mont = 1 },
+);
+
+undef $sudo if !$>;
+
+if($sudo) {
+  chomp($p = `bash -c 'type -p $sudo'`);
+  die "sorry, you must be root\n" if $p eq "";
+}
+
+END { cleanup }
+$SIG{INT} = \&cleanup;
+$SIG{TERM} = \&cleanup;
+
+if(!@ARGV) {
+  system "cat /proc/mounts";
+  exit;
+}
+
+$src = shift;
+$dst = shift;
+
+$dst = "/mnt" unless $dst;
+
+die "usage: mnt [options] src [dst]\n" if $src eq "" || @ARGV;
+
+die "not a directory: $dst\n" unless -d $dst;
+
+$src_0 = $src;
+$src_part = $1 if $src =~ s/::(\S+?)$//;
+$src_1 = $src;
+
+if(-d $src) {
+  system "${sudo}mount --bind '$src' '$dst'" unless $opt_no_mount;
+
+  exit;
+}
+
+if($src !~ m#/# && ! -e($src)) {
+  $label = readlink "/dev/disk/by-label/$src";
+  if($label && $label =~ s/\.\.\/\.\.\///) {
+    $src = "/dev/$label";
+  }
+}
+
+$compr = compressed $src;
+
+if($compr) {
+  $f = new_tmp_file;
+  system "$compr'$src' >$f";
+  $src = $f;
+}
+
+$arch = archive $src;
+
+if($arch) {
+  exit if $opt_no_mount;
+  system "${sudo}mount -o 'size=0,nr_inodes=0' -t tmpfs tmpfs $dst";
+  $f = $src;
+  if($f !~ m#^/#) {
+    chomp ($pwd = `/bin/pwd`);
+    die "oops: pwd failed\n" unless $pwd =~ m#^/#;
+    $f = "$pwd/$f";
+  }
+
+  if($arch->[0] eq 'cpio') {
+    do_cpio $dst, $f;
+  }
+  else {
+    ($cmd = $arch->[1]) =~ s/XXX/'$f'/g;
+    system "cd $dst ; ${sudo}$cmd";
+  }
+
+  system "${sudo}mount -oremount,ro $dst" if $opt_readonly;
+
+  if($opt_verbose) {
+    print "$src_1: $arch->[0] archive\n";
+  }
+
+  exit;
+}
+
+$fs = fstype $src;
+
+if(!$fs) {
+  @ptable = get_gpt $src;
+  @ptable = get_ptable $src unless @ptable;
+
+  if(@ptable) {
+    if($opt_verbose >= 2) {
+      print "partition table:\n";
+      for $p (@ptable) {
+        if($p->{type} == 0x100) {
+          print "  $p->{index}: type gpt, start $p->{start}, size $p->{size}\n";
+        }
+        elsif($p->{type}) {
+          print "  $p->{index}: type ${\sprintf '0x%02x', $p->{type}}, start $p->{start}, size $p->{size}, " .
+                "chs $p->{start_cyl}/$p->{start_head}/$p->{start_sec}" .
+                " - $p->{end_cyl}/$p->{end_head}/$p->{end_sec}\n";
+        }
+        $cnt++;
+      }
+    }
+
+    $f = new_tmp_file;
+
+    open F1, $src;
+
+    for $p (@ptable) {
+      next unless $p->{type};
+      next if $src_part && $src_part != $p->{index};
+      sysseek F1, $p->{start} * 0x200, 0;
+      undef $buf;
+      sysread F1, $buf, 256*1024;
+      open F2, ">$f";
+      syswrite F2, $buf;
+      close F2;
+      $fs = fstype $f;
+      if($fs) {
+        $part_index = $p->{index};
+        $part_ofs = $p->{start} * 0x200;
+        last;
+      }
+    }
+
+    close F1;
+  }
+}
+
+if($fs || $opt_mount_options =~ /encryption/) {
+  push @mo, "loop" if -f $src;
+  push @mo, "utf8" if $fs eq "vfat";
+  push @mo, "offset=$part_ofs" if $part_ofs;
+  push @mo, "ro" if $opt_readonly;
+  push @mo, $opt_mount_options if $opt_mount_options;
+  $mo = " -o" . join(",", @mo) if @mo;
+  
+  system "${sudo}mount${mo} -t '$fs' '$src' '$dst'\n" unless $opt_no_mount;
+
+  if($opt_verbose) {
+    if($part_index) {
+      print "${src_1}::$part_index (ofs $part_ofs): $fs image\n";
+    }
+    else {
+      print "$src_0: $fs image\n";
+    }
+  }
+
+  exit;
+}
+
+
+die "can't mount $src_0\n";
+
+sub cleanup
+{
+  unlink @tmp_files;
+  undef @tmp_files;
+}
+
+
+sub new_tmp_file
+{
+  local $_;
+
+  chomp ($_ = `mktemp /tmp/mnt.XXXXXXXXXX`);
+  die "error: mktemp failed\n" if $?;
+
+  push @tmp_files, $_;
+
+  return $_;
+}
+
+
+sub fstype
+{
+  local $_;
+  my ($buf, $fs);
+
+  if(-x '/sbin/blkid' && `/sbin/blkid $_[0] 2>/dev/null` =~ /TYPE="(\S+)"/) {
+    $fs = $1;
+  }
+
+  if(!$fs && -x '/bin/guessfstype' && `/bin/guessfstype $_[0] 2>/dev/null` =~ /appears.*:\s+(\S+)/) {
+    $fs = $1;
+    undef $fs if $fs =~ /^\(/;
+  }
+
+  if(!$fs) {
+    # guessfstype doesn't work well with FAT
+    # ... and not at all with squashfs
+    open F, $_[0];
+    sysread F, $buf, 0x200;
+    close F;
+    if(length($buf) == 0x200) {
+      if(
+        unpack("v", substr($buf,0x1fe, 2)) == 0xaa55 &&
+        unpack("v", substr($buf,0x0b, 2)) == 0x200 &&
+        unpack("C", substr($buf,0x26, 1)) == 0x29 &&
+        unpack("a8", substr($buf,0x36, 8)) =~ /^FAT(12|16|32)   $/
+      ) {
+        $fs = "vfat";
+      }
+      elsif(
+        unpack("V", $buf) == 0x73717368 ||
+        unpack("V", $buf) == 0x68737173
+      ) {
+        $fs = "squashfs";
+      }
+    }
+  }
+
+  undef $fs if $fs eq "swap";
+
+  print STDERR "fs($_[0]): $fs\n" if $opt_verbose >= 2;
+
+  return $fs;
+}
+
+
+sub get_ptable
+{
+  local $_;
+  my ($buf, @p, @p2, $i, $j, $p, $p_ofs);
+
+  open F, $_[0];
+  sysread F, $buf, 0x200;
+  close F;
+
+  return undef if unpack("v", substr($buf,0x1fe, 2)) != 0xaa55;
+
+  for($i = 0; $i < 4; $i++) {
+    $p[$i] = parse_ptable_entry substr($buf,0x1be + $i * 0x10, 0x10);
+    return undef unless $p[$i];
+  }
+
+  for $p (@p) {
+    if($p->{type} == 0x05 || $p->{type} == 0x0f) {
+      $p_ofs = $p->{start} unless defined $p_ofs;
+      open F, $_[0];
+      $i = sysseek F, $p->{start} * 0x200, 0;
+      last unless defined $i;
+      $i = sysread F, $buf, 0x200;
+      last unless $i == 0x200;
+      close F;
+      if(unpack("v", substr($buf,0x1fe, 2)) == 0xaa55) {
+        undef @p2;
+        for($i = 0; $i < 4; $i++) {
+          $p2[$i] = parse_ptable_entry substr($buf,0x1be + $i * 0x10, 0x10);
+          # print "i$i: $p2[$i]->{type}, $p2[$i]->{start} ($p2[$i]->{size})\n";
+          return undef unless $p2[$i];
+          if($p2[$i]->{type}) {
+            if($p2[$i]->{type} == 0x05 || $p2[$i]->{type} == 0x0f) {
+              $p2[$i]->{start} += $p_ofs;
+            }
+            else {
+              $p2[$i]->{start} += $p->{start};
+            }
+          }
+        }
+        for (@p2) {
+          next unless $_->{type};
+          push @p, $_;
+        }
+      }
+    }
+  }
+
+  for ($i = 0; $i < @p; $i++) {
+    if($p[$i]->{type} == 0x05 || $p[$i]->{type} == 0x0f) {
+      if($i < 4) {
+        $p[$i]->{type} = 0;
+      }
+      else {
+        splice @p, $i, 1;
+      }
+    }
+  }
+
+  for ($i = 0; $i < @p; $i++) {
+    $p[$i]->{index} = $i + 1;
+  }
+
+  return @p;
+}
+
+
+sub parse_ptable_entry
+{
+  my (@p, $p);
+
+  if($_[0] eq "\x00" x 16) {
+    $p->{type} = 0;
+    return $p;
+  }
+
+  @p = unpack "CCvCCvVV", $_[0];
+
+  $p->{flag} = $p[0];
+  $p->{type} = $p[3];
+  $p->{start_head} = $p[1];
+  $p->{start_cyl} = ($p[2] >> 8) + (($p[2] & 0xc0) << 2);
+  $p->{start_sec} = $p[2] & 0x3f;
+  $p->{end_head} = $p[4];
+  $p->{end_cyl} = ($p[5] >> 8) + (($p[5] & 0xc0) << 2);
+  $p->{end_sec} = $p[5] & 0x3f;
+  $p->{start} = $p[6];
+  $p->{size} = $p[7];
+
+  undef $p if !$p->{type} || ($p->{flag} & 0x7f) || !$p->{start_sec} || !$p->{end_sec};
+
+  return $p;
+}
+
+
+sub compressed
+{
+  local $_;
+  my $p;
+
+  $_ = `file -L $_[0] 2>/dev/null`;
+  $p = "gunzip -c 2>/dev/null " if /gzip compressed data/;
+  $p = "bunzip2 -c 2>/dev/null " if /bzip2 compressed data/;
+
+  return $p;
+}
+
+
+sub archive
+{
+  local $_;
+  my $p;
+
+  $_ = `file -L $_[0] 2>/dev/null`;
+  s/^.*:\s*//;
+  $p = [ "cpio", "cpio --quiet -dmi <XXX" ] if /cpio archive/;
+  $p = [ "tar", "tar -xpf XXX" ] if /tar archive/;
+  $p = [ "zip",  "unzip -qXL XXX" ] if /Zip archive data/;
+  $p = [ "rpm",  "rpm2cpio XXX | cpio --quiet --extract --unconditional --preserve-modification-time --make-directories" ] if /RPM/;
+
+  return $p;
+}
+
+
+sub do_cpio
+{
+  local $_;
+  my $dst = shift;
+  my $file = shift;
+  my ($f, $p, $buf_size, $buf, $cnt);
+
+  $buf_size = 512;
+  $cnt = 1;
+
+  if(!$src_part || $src_part == $cnt) {
+    open $p, "| ( cd $dst ; ${sudo}cpio --quiet -dmiu )";
+  }
+
+  open $f, $file;
+
+  while(sysread($f, substr($buf, length $buf), $buf_size) == $buf_size) {
+    if($buf =~ /TRAILER!!!\x00*$/) {
+      syswrite $p, $buf if $p;
+      undef $buf;
+      close $p;
+      undef $p;
+      $cnt++;
+      if(sysread($f, $buf, $buf_size) && (!$src_part || $src_part == $cnt)) {
+        open $p, "| ( cd $dst ; ${sudo}cpio --quiet -dmiu )";
+      }
+      next;
+    }
+
+    syswrite $p, substr($buf, 0, $buf_size) if $p;
+    $buf = substr($buf, $buf_size);
+  }
+
+  syswrite $p, $buf if $p;
+
+  close $p;
+
+  close $f;
+}
+
+
+sub get_gpt
+{
+  local $_;
+  my ($buf, $i, $ent, @p, $cnt);
+  my ($gpt_start, $gpt_entries, $gpt_entry_size, @type, $start, $end);
+
+  open F, $_[0];
+  sysread F, $buf, 0x400;
+  close F;
+
+  return ( ) if unpack("v", substr($buf,0x1fe, 2)) != 0xaa55;
+  return ( ) if substr($buf,0x200, 8) ne "EFI PART";
+  return ( ) if unpack("V", substr($buf,0x208, 4)) != 0x10000;
+
+  $gpt_start = unpack("V", substr($buf,0x248, 4)) + (unpack("V", substr($buf,0x24c, 4)) << 32);
+  $gpt_entries = unpack("V", substr($buf,0x250, 4));
+  $gpt_entry_size = unpack("V", substr($buf,0x254, 4));
+  
+  print "gpt start = $gpt_start, entries = $gpt_entries, entry size = $gpt_entry_size\n" if $verbose >= 2;
+
+  return ( ) if $gpt_entries == 0 || $gpt_entry_size == 0;
+
+  open F, $_[0];
+  sysseek F, $gpt_start * 0x200, 0;
+  sysread F, $buf, $gpt_entries * $gpt_entry_size;
+  close F;
+
+  $cnt = 1;
+  for($i = 0; $i < $gpt_entries; $i++) {
+    $ent = substr($buf, $gpt_entry_size * $i, $gpt_entry_size);
+    $type[0] = unpack("V", substr($ent, 0, 4));
+    $type[1] = unpack("V", substr($ent, 4, 4));
+    $type[2] = unpack("V", substr($ent, 8, 4));
+    $type[3] = unpack("V", substr($ent, 12, 4));
+
+    next if !$type[0] && !$type[1] && !$type[2] && !$type[3];
+
+    $start = unpack("V", substr($ent, 32, 4)) + (unpack("V", substr($ent, 36, 4)) << 32);
+    $end = unpack("V", substr($ent, 40, 4)) + (unpack("V", substr($ent, 44, 4)) << 32);
+
+    push @p, { index => $cnt++, type => 0x100, start => $start, size => $end - $start };
+  }
+
+  return @p;
+}
+
+

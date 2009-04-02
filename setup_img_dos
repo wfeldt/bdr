@@ -13,10 +13,10 @@ if [ -n "$start" ] ; then
   start="--part-ofs $start"
 fi
 
-umnt
+./umnt
 ./hdimage --verbose $start --size $size --chs 0 7 19 --mkfs xfs $file
-mnt $file
-sw 0 chmod 777 /mnt
+./mnt $file
+chmod 777 /mnt
 ./hdimage --verbose\
   --type 1\
   --size 10M\
@@ -27,4 +27,4 @@ sw 0 chmod 777 /mnt
   --boot-fat16 dos/freedos_boot.fat16\
   --add-files dos/kernel.sys dos/command.com dos/autoexec.bat dos/config.sys\
   -- /mnt/boot.img
-umnt
+./umnt

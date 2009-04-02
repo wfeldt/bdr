@@ -1,0 +1,236 @@
+BDR - Boot Drive Emulation
+==========================
+
+***
+
+Note: this software is still in an early stage. Although there are currently
+no open bugs, it is far from being well tested.
+
+So, be careful.
+
+***
+
+
+Overview
+--------
+
+BDR is a small program loaded at system startup, typically from your hard
+disk MBR, that makes a normal file available as disk drive in the BIOS.
+
+So far so good. But what's the point?
+
+The idea is that you can install your favorite bootloader (e.g. grub) into
+an image file and use that instead of a separate boot partition.
+
+Agreed, it sounds a bit weird at first; but there are several advantages
+because BDR takes care of:
+
+- device mapping
+
+  You don't need to worry about a correct 'device.map' file for grub. BDR
+  will sort out the drive mapping at boot time. That means you can rearrange
+  your disks or put it into a new machine and the emulated boot drive still
+  works (and you don't have to adjust your bootloader setup).
+
+- 64 bit sector numbers
+
+  The classic partitioning scheme works only up to 2TB (resp. 4TB, but only
+  with tricks) due to 32 bit sector numbers. BDR works with 64 bit sector
+  numbers and you can continue using your bootloader with large disks even
+  if it only supports 32 bit sector numbers. (Your emulated drive will
+  typically be substantially smaller than 2TB.)
+
+- works with GPT
+
+  If you partition with GPT (e.g. because the disk is > 2TB) you can still
+  use a non-GPT-aware bootloader.
+
+- resizable
+
+  You can resize your boot disk any time you want.
+
+- no separate boot partition
+
+  If you need a separate boot partition, this may be a way to get rid of it.
+
+- independent of filesystem
+
+  As the image file can be on any (noncompressing) filesystem, you're not
+  dependent on the support of your favorite filesystem in the bootloader. 
+  (E.g. grub needs not follow the latest ext3/4 developments or you can boot
+  with syslinux but still use jfs for your system partition.)
+
+- RAID/LVM
+
+  [* note: not yet *]
+
+  Works with raid setups, even if your bootloader does not.
+
+
+How it works
+------------
+
+BDR works in two steps:
+
+1) Create a mapping.
+
+  You create an image file, complete with partition table and a partition
+  with a filesystem. Then run 'bdr' to map the file and store the metadata in
+  a file 'bdr.map' on the first partition.
+
+  You can set the drive geometry, BIOS drive id, and some other flags (e.g.
+  make the drive read-only).
+
+2) Attach the mapped file to your boot disk.
+
+  Once step 1 is done, you install a small bootloader stub into the MBR of
+  your boot disk (or all disks, if you're not sure which one is the boot
+  disk) and point it to the image file.
+
+  All this small boot program does is to assemble the new boot drive at
+  startup and hook a driver for it to the BIOS. It then continues booting
+  from the new drive. This means the image file must have a workable
+  bootloader setup. See the example below how to do it for grub.
+
+
+Setup example
+-------------
+
+***
+
+A fancy wrapper script is needed. Here is how to do it step by step.
+
+***
+
+
+1) create a disk image file (e.g. 50MB):
+
+# dd if=/dev/zero bs=1M count=50 of=/boot.img
+50+0 records in
+50+0 records out
+52428800 bytes (52 MB) copied, 0.118283 s, 443 MB/s
+
+
+2) partition it and add a filesystem (e.g. ext2):
+
+# parted /boot.img mklabel msdos mkpartfs p ext2 0 100% unit s p
+Model:  (file)
+Disk /boot.img: 102400s
+Sector size (logical/physical): 512B/512B
+Partition Table: msdos
+
+Number  Start  End      Size     Type     File system  Flags                        
+ 1      32s    102399s  102368s  primary  ext2         , , , , , , , , , type=83, , 
+
+*** Note:
+ The start offset is 32 sectors, in bytes: 32*512 = 16384.
+
+
+3) map the image file:
+
+# bdr --create-map --bios 0x80 --geo 4,32 /boot.img 
+mapping info created
+
+*** Note1:
+  4 heads, 32 sectors/track is the typical parted default geometry.
+
+*** Note2:
+  0x80 is the first BIOS disk. You can use other values (e.g. 0x83) but remember
+  to adjust your grub setup accordingly (e.g. hd0 -> hd3).
+
+You can look at the result:
+
+# bdr --verify-map /boot.img 
+/boot.img: mapping found
+        id: c078d2fa72bc387e
+      date: 2/4/2009
+bios drive: 0x80
+ disk size: 102400 sectors
+  disk geo: chs 800/4/32
+     flags: +edd, rw
+     drive: 0 = /dev/sda
+    sector: 2803723
+
+
+4) now mount the image:
+
+# mount -oloop,offset=$((32*512)) /boot.img /mnt
+
+*** Note:
+  We need the offset values from step 2.
+
+You should see just the mapping file:
+
+# ls -l /mnt
+total 15
+-rw-r--r-- 1 root root  3072 2009-04-02 14:30 bdr.map
+drwxr-xr-x 2 root root 12288 2009-04-02 14:29 lost+found
+
+
+5) copy your boot files to it:
+
+# cp -a /boot/* /mnt
+
+
+6) to simplify things, remount it to /boot:
+
+# umount /mnt
+# mount -oloop,offset=$((32*512)) /boot.img /boot
+
+
+7) write a new device map
+
+# echo "(hd0) /boot.img" >/boot/grub/device.map
+
+Also, ensure you reference hd0 in /boot/grub/menu.lst. If you have several
+disks in your machine, you might need to edit menu.lst a bit.
+
+*** Note:
+  See Note2 from step 3.
+
+
+8) setup grub:
+
+# echo "setup (hd0) (hd0,0)" | grub
+
+If things went fine so far /boot.img is now ready to use as disk image. You can
+check that the grub setup is ok using hexdump:
+
+# hexdump -C /boot.img | head -30
+
+shows a lot of numbers but you should also see the string 'GRUB' in the
+ASCII dump on the right side.
+
+Also,
+
+# qemu -hda /boot.img
+
+should show grub booting.
+
+
+9) write BDR loader into MBR of your real boot disk:
+
+# bdr --add-to-mbr /dev/sda /boot.img
+/boot.img: mapping found
+        id: c078d2fa72bc387e
+      date: 2/4/2009
+bios drive: 0x80
+ disk size: 102400 sectors
+  disk geo: chs 800/4/32
+     flags: +edd, rw
+     drive: 0 = /dev/sda
+    sector: 2803723
+
+/dev/sda: mbr updated
+
+That's it. Next reboot should start grub from the image file.
+
+
+10) fstab
+
+To get the image file mounted at system startup add a line like
+
+/boot.img /boot auto loop,offset=16384 0 0
+
+to your /etc/fstab.
+

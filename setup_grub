@@ -12,12 +12,12 @@ if [ -z "$drive" ] ; then
   drive=0
 fi
 
-mnt $file
-sw 0 mkdir -p /mnt/boot/grub
-sw 0 cp /usr/lib/grub/{fat_stage1_5,stage1,stage2} /mnt/boot/grub
-sw 0 cp /boot/vmlinuz /boot/initrd /boot/message /mnt/boot
+./mnt $file
+mkdir -p /mnt/boot/grub
+cp /usr/lib/grub/{fat_stage1_5,stage1,stage2} /mnt/boot/grub
+cp /boot/vmlinuz /boot/initrd /boot/message /mnt/boot
 
-sw 0 sh -c 'cat >/mnt/boot/grub/menu.lst' <<zap
+sh -c 'cat >/mnt/boot/grub/menu.lst' <<zap
 default 0
 timeout 20
 gfxmenu (hd${drive},0)/boot/message
@@ -33,8 +33,8 @@ title Test 2
   initrd /boot/initrd
 zap
 
-umnt
+./umnt
 
 echo "(hd0) /dev/null" >setup_grub.tmp
-echo -e "device (hd${drive}) /mnt/boot.img\nsetup --prefix=/boot/grub (hd${drive}) (hd${drive},0)" | sw 0 grub --batch  --device-map=setup_grub.tmp --no-config-file
+echo -e "device (hd${drive}) /mnt/boot.img\nsetup --prefix=/boot/grub (hd${drive}) (hd${drive},0)" | grub --batch  --device-map=setup_grub.tmp --no-config-file
 rm -f setup_grub.tmp
