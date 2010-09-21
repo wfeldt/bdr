@@ -1264,7 +1264,7 @@ char *mnt_image(const char *file)
   if(
     mbr[0x1fe] != 0x55 ||
     mbr[0x1ff] != 0xaa ||
-    !pstart || !psize
+    !psize
   ) {
     fprintf(stderr, "%s: no/invalid partition table\n", file);
     return NULL;
